@@ -1,5 +1,6 @@
 from rssrob import digest
 from rssrob.config import Site
+from rssrob.models import Item
 
 ITEM = ("xpath://h2[normalize-space()='通知公告']/ancestor::div"
         "[contains(@class,'ipp2020-item')][1]//div[@class='bd']//ul/li")
@@ -10,6 +11,16 @@ def _site():
                 item=ITEM, fields={"title": "xpath:.//a", "link": "xpath:.//a/@href",
                                    "date": "xpath:.//span"})
 
+
+def _record_sends(monkeypatch):
+    """Patch send_email to record (to, bcc) and not actually send."""
+    calls = []
+    monkeypatch.setattr(digest, "send_email",
+                        lambda to, subject, body, html=None, bcc=None: calls.append((to, bcc)))
+    return calls
+
+
+# --- formatting -------------------------------------------------------------
 
 def test_build_digest_date_title_description():
     entries = [
@@ -29,27 +40,77 @@ def test_shorten_truncates_and_strips_leading_css():
     assert not out.startswith("@page") and out.endswith("…") and len(out) <= 41
 
 
-def test_send_feed_digest_dry_run(fixtures, make_fetcher):
-    html = (fixtures / "notices.html").read_bytes()
-    # only the list page is mapped; article fetches fail -> fall back to list title
-    fetcher = make_fetcher({"http://www.ipp.cas.cn/": html})
-    res = digest.send_feed_digest(_site(), ["a@b.com"], fetcher=fetcher, dry_run=True)
-    assert res["dry_run"] and res["sent"] == 0 and res["items"] == 2
-    assert "通知一" in res["text"]
+# --- sent-state store -------------------------------------------------------
+
+def test_sent_store_mark_and_dedupe(tmp_path):
+    s = digest.SentStore(str(tmp_path / "s.json"))
+    assert s.seen_ids("f") == set()
+    s.mark("f", ["a", "b"])
+    s.mark("f", ["b", "c", ""])
+    assert s.seen_ids("f") == {"a", "b", "c"}
 
 
-def test_send_feed_digest_sends_to_each(fixtures, make_fetcher, monkeypatch):
+def test_select_new_items(tmp_path):
+    items = [Item(id="1", title="a", link="l1"), Item(id="2", title="b", link="l2")]
+    s = digest.SentStore(str(tmp_path / "s.json"))
+    assert digest.select_new_items(items, "f", s) == items
+    s.mark("f", ["1"])
+    assert [i.id for i in digest.select_new_items(items, "f", s)] == ["2"]
+
+
+# --- digest sending ---------------------------------------------------------
+
+def test_sends_one_email_with_bcc(fixtures, make_fetcher, monkeypatch):
     html = (fixtures / "notices.html").read_bytes()
     fetcher = make_fetcher({"http://www.ipp.cas.cn/": html})
-    sent = []
-    monkeypatch.setattr(digest, "send_email",
-                        lambda to, subject, body, html=None: sent.append(to))
+    calls = _record_sends(monkeypatch)
+    # no state -> sends all current items in a single email, Bcc = all recipients
     res = digest.send_feed_digest(_site(), ["a@b.com", "c@d.com"], fetcher=fetcher)
-    assert res["sent"] == 2 and not res["errors"] and sent == ["a@b.com", "c@d.com"]
+    assert res["sent"] == 2 and res["items"] == 2
+    assert len(calls) == 1                          # ONE email
+    assert calls[0][1] == ["a@b.com", "c@d.com"]    # via Bcc
 
 
-def test_send_feed_digest_limit(fixtures, make_fetcher):
+def test_first_send_uses_first_limit_then_incremental(fixtures, make_fetcher, monkeypatch, tmp_path):
     html = (fixtures / "notices.html").read_bytes()
     fetcher = make_fetcher({"http://www.ipp.cas.cn/": html})
-    res = digest.send_feed_digest(_site(), ["a@b.com"], limit=1, fetcher=fetcher, dry_run=True)
-    assert res["items"] == 1
+    state = digest.SentStore(str(tmp_path / "state.json"))
+    calls = _record_sends(monkeypatch)
+
+    # first send: both items (first_limit >= 2), recorded
+    r1 = digest.send_feed_digest(_site(), ["a@b.com"], fetcher=fetcher, state=state)
+    assert r1["items"] == 2 and r1["sent"] == 1 and not r1.get("no_new")
+    assert state.seen_ids("ipp") and len(calls) == 1
+
+    # second send: nothing new -> no email
+    r2 = digest.send_feed_digest(_site(), ["a@b.com"], fetcher=fetcher, state=state)
+    assert r2.get("no_new") and r2["sent"] == 0 and len(calls) == 1
+
+
+def test_first_limit_caps_first_send(fixtures, make_fetcher, tmp_path):
+    html = (fixtures / "notices.html").read_bytes()
+    fetcher = make_fetcher({"http://www.ipp.cas.cn/": html})
+    state = digest.SentStore(str(tmp_path / "s.json"))
+    res = digest.send_feed_digest(_site(), ["a@b.com"], first_limit=1,
+                                  fetcher=fetcher, state=state, dry_run=True)
+    assert res["items"] == 1                        # first send capped at first_limit
+
+
+def test_dry_run_does_not_record_state(fixtures, make_fetcher, tmp_path):
+    html = (fixtures / "notices.html").read_bytes()
+    fetcher = make_fetcher({"http://www.ipp.cas.cn/": html})
+    state = digest.SentStore(str(tmp_path / "s.json"))
+    digest.send_feed_digest(_site(), ["a@b.com"], fetcher=fetcher, state=state, dry_run=True)
+    assert state.seen_ids("ipp") == set()
+
+
+def test_all_ignores_state(fixtures, make_fetcher, monkeypatch, tmp_path):
+    html = (fixtures / "notices.html").read_bytes()
+    fetcher = make_fetcher({"http://www.ipp.cas.cn/": html})
+    state = digest.SentStore(str(tmp_path / "s.json"))
+    calls = _record_sends(monkeypatch)
+
+    digest.send_feed_digest(_site(), ["a@b.com"], fetcher=fetcher, state=state)   # populate
+    assert digest.send_feed_digest(_site(), ["a@b.com"], fetcher=fetcher, state=state).get("no_new")
+    r = digest.send_feed_digest(_site(), ["a@b.com"], fetcher=fetcher, state=state, only_new=False)
+    assert not r.get("no_new") and r["sent"] == 1 and len(calls) == 2

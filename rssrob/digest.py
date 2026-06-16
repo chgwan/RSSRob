@@ -4,17 +4,27 @@ Mirrors the web preview: each item shows date + full title (the item's link is
 followed for the full title) + a short description. The full article body is
 *not* included.
 
-    python -m rssrob.digest --site <name>              # send to the feed's subscribers
+By default the digest is *incremental*: only items not sent in a previous
+digest are included (tracked by item id in a JSON state file). The first run
+establishes the baseline; later runs send only what's new, and send nothing
+when there are no new items. Use --all to ignore the state and resend
+everything; --dry-run previews without sending or recording state.
+
+    python -m rssrob.digest --site <name>              # send new items to subscribers
     python -m rssrob.digest --site <name> --to me@x    # send to an override address
-    python -m rssrob.digest --site <name> --dry-run     # print, don't send
+    python -m rssrob.digest --site <name> --dry-run     # print, don't send/record
+    python -m rssrob.digest --site <name> --all         # ignore state, resend all
 
 SMTP config comes from the environment / .env (see rssrob.notify).
 """
 
 import argparse
 import html as _html
+import json
+import os
 import re
 import sys
+import threading
 from typing import List
 
 import lxml.etree
@@ -59,6 +69,61 @@ def _shorten(text, n=DESC_LEN):
     if not text:
         return None
     return text if len(text) <= n else text[:n].rstrip() + "…"
+
+
+def _item_key(it):
+    return it.id or it.link
+
+
+class SentStore:
+    """Track which item ids have already been emailed per feed (JSON file).
+
+    Shape on disk: {"<feed-name>": ["id1", "id2", ...]}. Bounded to the most
+    recent ids per feed to avoid unbounded growth."""
+
+    CAP = 1000
+
+    def __init__(self, path):
+        self.path = path
+        self._lock = threading.Lock()
+
+    def _load(self):
+        if os.path.exists(self.path):
+            with open(self.path, encoding="utf-8") as f:
+                return json.load(f) or {}
+        return {}
+
+    def _save(self, data):
+        directory = os.path.dirname(self.path) or "."
+        os.makedirs(directory, exist_ok=True)
+        tmp = self.path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2, sort_keys=True)
+        os.replace(tmp, self.path)
+
+    def seen_ids(self, feed):
+        return set(self._load().get(feed, []))
+
+    def mark(self, feed, ids):
+        ids = [i for i in ids if i]
+        if not ids:
+            return
+        with self._lock:
+            data = self._load()
+            lst = data.setdefault(feed, [])
+            existing = set(lst)
+            for i in ids:
+                if i not in existing:
+                    lst.append(i)
+                    existing.add(i)
+            data[feed] = lst[-self.CAP:]
+            self._save(data)
+
+
+def select_new_items(items, feed, state):
+    """Return only items whose id has not already been emailed for `feed`."""
+    seen = state.seen_ids(feed)
+    return [it for it in items if _item_key(it) not in seen]
 
 
 def enrich_items(site, items, fetcher) -> List[dict]:
@@ -127,30 +192,50 @@ def build_digest(title: str, entries: List[dict]) -> tuple:
 
 
 def send_feed_digest(site, recipients: List[str], limit: int = 10,
-                     fetcher=None, dry_run: bool = False) -> dict:
+                     first_limit: int = 20, fetcher=None, dry_run: bool = False,
+                     state=None, only_new: bool = True) -> dict:
     """Fetch a feed, follow links for full titles + short descriptions, and
-    email a digest. `fetcher` is injectable for testing."""
+    email a single digest to all recipients (Bcc).
+
+    With a `state` and `only_new=True`, only items not previously sent are
+    included, and their ids are recorded after a successful send. The *first*
+    send for a feed (no prior state) backfills up to `first_limit` items;
+    later sends are capped at `limit`. `fetcher` is injectable for testing."""
     fetcher = fetcher or Fetcher(proxy=getattr(site, "proxy", None))
     items, feed_title, _ = obtain_items(site, fetcher)
-    items = items[:limit]
-    entries = enrich_items(site, items, fetcher)
+    first_send = state is not None and not state.seen_ids(site.name)
+    if only_new and state is not None:
+        items = select_new_items(items, site.name, state)
+    cap = first_limit if (only_new and first_send) else limit
+    items = items[:cap]
     title = site.title or feed_title or site.name
+
+    if not items:                                    # nothing new to send
+        return {"subject": None, "items": 0, "recipients": recipients,
+                "sent": 0, "errors": [], "dry_run": dry_run, "no_new": True}
+
+    entries = enrich_items(site, items, fetcher)
     subject, text, html_body = build_digest(title, entries)
 
     if dry_run:
         return {"subject": subject, "text": text, "html": html_body,
                 "items": len(entries), "recipients": recipients, "sent": 0,
-                "errors": [], "dry_run": True}
+                "errors": [], "dry_run": True, "no_new": False}
 
-    sent, errors = 0, []
-    for r in recipients:
-        try:
-            send_email(r, subject, text, html=html_body)
-            sent += 1
-        except Exception as e:
-            errors.append((r, f"{type(e).__name__}: {e}"))
+    # one email to everyone, Bcc so recipients don't see each other
+    errors = []
+    try:
+        send_email([], subject, text, html=html_body, bcc=recipients)
+        sent = len(recipients)
+    except Exception as e:
+        sent = 0
+        errors.append(("*", f"{type(e).__name__}: {e}"))
+
+    if sent and state is not None:
+        state.mark(site.name, [_item_key(it) for it in items])
+
     return {"subject": subject, "items": len(entries), "recipients": recipients,
-            "sent": sent, "errors": errors, "dry_run": False}
+            "sent": sent, "errors": errors, "dry_run": False, "no_new": False}
 
 
 def main(argv=None) -> int:
@@ -163,8 +248,17 @@ def main(argv=None) -> int:
                    help="override recipients (repeatable); default = the feed's subscribers")
     p.add_argument("--subscribers", default="subscribers.json",
                    help="subscriber store path (default: subscribers.json)")
-    p.add_argument("--limit", type=int, default=10, help="max items in the digest")
-    p.add_argument("--dry-run", action="store_true", help="print the digest, do not send")
+    p.add_argument("--limit", type=int, default=None,
+                   help="max NEW items per incremental send (default: digest.limit or 10)")
+    p.add_argument("--first-limit", type=int, default=None,
+                   help="max items on the first send for a feed "
+                        "(default: digest.first_limit or 20)")
+    p.add_argument("--state", default="digest_state.json",
+                   help="sent-state file for incremental sends (default: digest_state.json)")
+    p.add_argument("--all", action="store_true",
+                   help="ignore state and (re)send all current items")
+    p.add_argument("--dry-run", action="store_true",
+                   help="print the digest, do not send or record state")
     p.add_argument("--no-dotenv", action="store_true", help="don't load .env (use real env only)")
     args = p.parse_args(argv)
 
@@ -186,8 +280,16 @@ def main(argv=None) -> int:
     if not args.dry_run and not args.no_dotenv:
         load_dotenv()
 
+    # CLI flags override config's `digest:` block, which overrides built-in defaults.
+    limit = args.limit if args.limit is not None else int(config.digest.get("limit", 10))
+    first_limit = (args.first_limit if args.first_limit is not None
+                   else int(config.digest.get("first_limit", 20)))
+
+    state = SentStore(args.state)
     try:
-        result = send_feed_digest(site, recipients, limit=args.limit, dry_run=args.dry_run)
+        result = send_feed_digest(site, recipients, limit=limit,
+                                  first_limit=first_limit, dry_run=args.dry_run,
+                                  state=state, only_new=not args.all)
     except EmailError as e:
         print(f"email error: {e}", file=sys.stderr)
         return 2
@@ -195,15 +297,20 @@ def main(argv=None) -> int:
         print(f"failed: {type(e).__name__}: {e}", file=sys.stderr)
         return 1
 
+    if result.get("no_new"):
+        print(f"no new items for {site.name!r} since last send (use --all to resend)")
+        return 0
+
     if args.dry_run:
         print(f"[dry-run] subject: {result['subject']}")
-        print(f"[dry-run] {result['items']} item(s) -> {len(recipients)} recipient(s): "
+        print(f"[dry-run] {result['items']} new item(s) -> {len(recipients)} recipient(s): "
               f"{', '.join(recipients)}")
         print("-" * 60)
         print(result["text"])
         return 0
 
-    print(f"sent '{result['subject']}' to {result['sent']}/{len(recipients)} recipient(s)")
+    print(f"sent '{result['subject']}' ({result['items']} item(s)) to "
+          f"{result['sent']} recipient(s) in one email")
     for r, err in result["errors"]:
         print(f"  FAILED {r}: {err}", file=sys.stderr)
     return 0 if not result["errors"] else 1

@@ -86,10 +86,14 @@ class SmtpConfig:
 
 
 def build_message(sender: str, recipients: Sequence[str], subject: str,
-                  body: str, html: Optional[str] = None) -> EmailMessage:
+                  body: str, html: Optional[str] = None,
+                  bcc: Optional[Sequence[str]] = None) -> EmailMessage:
     msg = EmailMessage()
     msg["From"] = sender
-    msg["To"] = ", ".join(recipients)
+    if recipients:
+        msg["To"] = ", ".join(recipients)
+    if bcc:
+        msg["Bcc"] = ", ".join(bcc)
     msg["Subject"] = subject
     msg.set_content(body or "")
     if html:
@@ -98,20 +102,26 @@ def build_message(sender: str, recipients: Sequence[str], subject: str,
 
 
 def send_email(to: Union[str, Sequence[str]], subject: str, body: str,
-               html: Optional[str] = None, config: Optional[SmtpConfig] = None,
-               smtp_factory=None) -> List[str]:
-    """Send one email. `to` is an address or a list. `config` defaults to
-    SmtpConfig.from_env(); `smtp_factory` is injectable for testing.
-    Returns the recipient list on success."""
+               html: Optional[str] = None, bcc: Union[str, Sequence[str], None] = None,
+               config: Optional[SmtpConfig] = None, smtp_factory=None) -> List[str]:
+    """Send one email to all recipients. `to` and `bcc` are an address or list.
+    Use `bcc` to send a single email to many recipients without exposing the
+    list. `config` defaults to SmtpConfig.from_env(); `smtp_factory` is
+    injectable for testing. Returns the full recipient list on success."""
     cfg = config or SmtpConfig.from_env()
     if not cfg.sender:
         raise EmailError("no From address (set RSSROB_SMTP_FROM or RSSROB_SMTP_USER)")
-    recipients = [to] if isinstance(to, str) else list(to)
-    recipients = [r for r in recipients if r]
-    if not recipients:
+    to_list = [to] if isinstance(to, str) else list(to or [])
+    to_list = [r for r in to_list if r]
+    bcc_list = [bcc] if isinstance(bcc, str) else list(bcc or [])
+    bcc_list = [r for r in bcc_list if r]
+    envelope = to_list + bcc_list
+    if not envelope:
         raise EmailError("no recipients")
 
-    msg = build_message(cfg.sender, recipients, subject, body, html)
+    display_to = to_list or [cfg.sender]   # ensure a valid To even when Bcc-only
+    msg = build_message(cfg.sender, display_to, subject, body, html,
+                        bcc=bcc_list or None)
 
     if smtp_factory is None:
         if cfg.use_ssl:
@@ -126,7 +136,7 @@ def send_email(to: Union[str, Sequence[str]], subject: str, body: str,
         if cfg.user and cfg.password:
             server.login(cfg.user, cfg.password)
         server.send_message(msg)
-    return recipients
+    return envelope
 
 
 def main(argv=None) -> int:

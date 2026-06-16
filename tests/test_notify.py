@@ -53,6 +53,19 @@ def test_send_email_ssl_skips_starttls_and_no_auth():
     assert msg["To"] == "a@b, c@d"
 
 
+def test_send_email_bcc_one_message_hides_recipients():
+    cfg = SmtpConfig(host="h", sender="from@x")
+    fake = FakeSMTP()
+    env = send_email([], "s", "b", bcc=["a@b", "c@d"], config=cfg,
+                     smtp_factory=lambda: fake)
+    assert env == ["a@b", "c@d"]                     # all recipients returned
+    sends = [c for c in fake.calls if c[0] == "send"]
+    assert len(sends) == 1                           # a single message
+    msg = sends[0][1]
+    assert msg["Bcc"] == "a@b, c@d"                  # recipients in Bcc
+    assert msg["To"] == "from@x"                     # To defaults to sender
+
+
 def test_send_email_no_recipients():
     cfg = SmtpConfig(host="h", sender="x@y")
     with pytest.raises(EmailError):
