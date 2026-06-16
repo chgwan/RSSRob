@@ -229,6 +229,7 @@ def index():
         title, desc = enrich(it, article_fetcher, site.article)
         entries.append({"item": it, "title": title, "desc": desc})
 
+    subs = SUBS.list(site.name)
     return render_template(
         "preview.html",
         site=site,
@@ -238,7 +239,9 @@ def index():
         source=main_source,
         fetch_error=main_error,
         display_title=site.title or feed_title or site.name,
-        subscriber_count=len(SUBS.list(site.name)),
+        subscriber_count=len(subs),
+        subscribers=subs,
+        show_subs=bool(request.args.get("show_subs")),
         subscribed=request.args.get("subscribed"),
         sub_error=request.args.get("sub_error"),
     )
@@ -253,9 +256,20 @@ def subscribe():
         abort(400, description="missing feed")
     status = SUBS.add(site, email)
     if status == "added":
-        return redirect(url_for("index", site=site, subscribed=email))
+        return redirect(url_for("index", site=site, subscribed=email, show_subs=1))
     msg = "already subscribed" if status == "exists" else "please enter a valid email address"
-    return redirect(url_for("index", site=site, sub_error=msg))
+    return redirect(url_for("index", site=site, sub_error=msg, show_subs=1))
+
+
+@app.route("/unsubscribe", methods=["POST"])
+def unsubscribe():
+    """Remove an email from a feed's subscriber list."""
+    site = (request.form.get("site") or "").strip()
+    email = (request.form.get("email") or "").strip()
+    if not site:
+        abort(400, description="missing feed")
+    SUBS.remove(site, email)
+    return redirect(url_for("index", site=site, show_subs=1))
 
 
 def _terms(s):

@@ -30,8 +30,37 @@
     <span class="sub-label">📧 Get email updates for this feed:</span>
     <input type="email" name="email" placeholder="you@example.com" required>
     <button type="submit">Subscribe</button>
-    {% if subscriber_count %}<span class="sub-count">{{ subscriber_count }} subscribed</span>{% endif %}
+    {% if subscriber_count %}
+      <a class="sub-count" href="{{ url_for('index', site=site.name, show_subs=1) }}">
+        {{ subscriber_count }} subscribed</a>
+    {% endif %}
   </form>
+
+  {% if show_subs %}
+    <div class="sub-list">
+      <div class="sub-list-head">
+        Subscribers for <strong>{{ site.name }}</strong> ({{ subscriber_count }})
+        <a href="{{ url_for('index', site=site.name) }}">hide</a>
+      </div>
+      {% if subscribers %}
+        <ul>
+          {% for e in subscribers %}
+            <li>
+              <span>{{ e }}</span>
+              <form method="post" action="{{ url_for('unsubscribe') }}">
+                <input type="hidden" name="site" value="{{ site.name }}">
+                <input type="hidden" name="email" value="{{ e }}">
+                <button type="submit" title="remove this subscriber">unsubscribe</button>
+              </form>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <div class="empty">No subscribers yet.</div>
+      {% endif %}
+    </div>
+  {% endif %}
+
   <style>
     .ok-banner { border-left:4px solid #1a7f37; background:#dafbe1; color:#1a4d2e;
       padding:.6rem .9rem; border-radius:6px; margin:1rem 0; font-size:.9rem; }
@@ -43,7 +72,21 @@
       border:1px solid #d0d7de; border-radius:7px; font-size:.9rem; }
     form.subscribe button { background:#0353a4; color:#fff; border:0;
       padding:.45rem 1.1rem; border-radius:7px; font-size:.9rem; cursor:pointer; }
-    form.subscribe .sub-count { font-size:.8rem; color:#656d76; }
+    a.sub-count { font-size:.8rem; color:#0353a4; text-decoration:none; white-space:nowrap; }
+    a.sub-count:hover { text-decoration:underline; }
+    .sub-list { background:#fff; border:1px solid #d0d7de; border-radius:10px;
+      padding:.6rem .9rem; margin:.2rem 0 1rem; font-size:.88rem; }
+    .sub-list-head { color:#656d76; margin-bottom:.4rem; }
+    .sub-list-head a { margin-left:.5rem; }
+    .sub-list ul { list-style:none; margin:0; padding:0; }
+    .sub-list li { display:flex; align-items:center; justify-content:space-between;
+      gap:.6rem; padding:.25rem 0; border-bottom:1px solid #f0f2f4; }
+    .sub-list li:last-child { border-bottom:0; }
+    .sub-list li form { margin:0; }
+    .sub-list li button { background:none; border:0; color:#cf222e; cursor:pointer;
+      font-size:.8rem; padding:0; }
+    .sub-list li button:hover { text-decoration:underline; }
+    .sub-list .empty { color:#656d76; }
   </style>
 
   <div class="meta">
