@@ -9,6 +9,16 @@ def _write(tmp_path, text):
     return str(p)
 
 
+def test_digest_block_parsed(tmp_path):
+    cfg = load_config(_write(tmp_path, "digest:\n  first_limit: 20\n  limit: 5\nsites: []\n"))
+    assert cfg.digest == {"first_limit": 20, "limit": 5}
+
+
+def test_digest_defaults_empty(tmp_path):
+    cfg = load_config(_write(tmp_path, "sites: []\n"))
+    assert cfg.digest == {}
+
+
 VALID = """
 output_dir: ./feeds
 state_db: ./rssrob.db

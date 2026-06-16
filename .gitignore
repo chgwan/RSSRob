@@ -29,6 +29,8 @@ feeds/
 /preview.html
 # user-submitted emails — never commit
 subscribers.json
+# per-feed "already emailed" item ids for incremental digests (runtime state)
+digest_state.json
 
 # Local secrets / dotenv files (never commit). .env.example is the committed
 # template (not matched by these patterns).

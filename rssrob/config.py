@@ -62,6 +62,7 @@ class Config:
     state_db: str
     http: HttpConfig
     sites: List[Site]
+    digest: Dict[str, int] = field(default_factory=dict)  # email digest sizing
 
 
 def default_config_path() -> str:
@@ -131,6 +132,7 @@ def _build_config(raw: dict) -> Config:
         state_db=raw.get("state_db", "./rssrob.db"),
         http=http,
         sites=sites,
+        digest=raw.get("digest") or {},
     )
 
 

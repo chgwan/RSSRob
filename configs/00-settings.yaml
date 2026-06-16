@@ -27,3 +27,8 @@ defaults:
   timeout: 20                # HTTP fetch timeout, seconds
   user_agent: RSSRob/0.1     # User-Agent sent when fetching pages/feeds
   # proxy: socks5://127.0.0.1:1080   # optional default proxy for feeds that need one
+
+# Email digest sizing (rssrob.digest). CLI --first-limit / --limit override these.
+digest:
+  first_limit: 20            # items on the FIRST send for a feed (initial backfill)
+  limit: 10                  # max new items per later incremental send
