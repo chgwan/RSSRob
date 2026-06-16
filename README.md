@@ -1,5 +1,7 @@
 # RSSRob
 
+**English** | [中文](README.zh-CN.md)
+
 **A light, configurable tool that generates RSS feeds from any website — even sites that don't offer one.**
 
 For sites without a feed, you point RSSRob at a page and tell it (with CSS selectors or XPath) where the items and their fields live; for sites that already publish RSS/Atom, you just give it the feed URL. Either way, RSSRob runs on a schedule, builds a spec-correct RSS feed, and serves it over HTTP. It remembers everything it has seen, so your feed accumulates history and never shows the same item twice.
@@ -164,6 +166,8 @@ exists, else `config.yaml`, else `config.example.yaml`. Override with
 | `fields` | html only | Map of field name → selector (see below). Required for `html`; ignored for `rss`. |
 | `interval` | no | Overrides `defaults.interval` for this site. |
 | `max_items` | no | Overrides `defaults.max_items` for this site. |
+| `proxy` | no | Per-feed proxy; accepts `socks5://ip:port` or `http(s)://ip:port`. |
+| `article` | no | "Go deeper" selectors (`title`/`content`): follow each item's link for the full title + body. |
 
 #### `rss` source example
 
