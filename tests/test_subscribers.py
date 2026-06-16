@@ -51,3 +51,11 @@ def test_remove(tmp_path):
     assert s.remove("f", "A@B.com") is True
     assert s.list("f") == []
     assert s.remove("f", "a@b.com") is False
+
+
+def test_by_email_reverse_view(tmp_path):
+    s = Subscribers(str(tmp_path / "subs.json"))
+    s.add("feedA", "x@y.com")
+    s.add("feedB", "x@y.com")
+    s.add("feedA", "z@y.com")
+    assert s.by_email() == {"x@y.com": ["feedA", "feedB"], "z@y.com": ["feedA"]}

@@ -272,6 +272,17 @@ def unsubscribe():
     return redirect(url_for("index", site=site, show_subs=1))
 
 
+@app.route("/subscribers")
+def email_list():
+    """List every subscriber email and which feeds it's subscribed to."""
+    try:
+        sites = load_config(_config_path()).sites
+    except Exception:
+        sites = []
+    return render_template("subscribers.html", sites=sites, active=None,
+                           by_email=SUBS.by_email())
+
+
 def _terms(s):
     """Split a comma/newline separated list into trimmed, non-empty terms."""
     return [t.strip() for t in re.split(r"[,\n]", s or "") if t.strip()]

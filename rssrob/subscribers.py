@@ -40,6 +40,14 @@ class Subscribers:
     def list(self, feed: str) -> List[str]:
         return list(self._load().get(feed, []))
 
+    def by_email(self) -> dict:
+        """Reverse view: {email: [feeds...]}, emails and feeds sorted."""
+        out: dict = {}
+        for feed, emails in self._load().items():
+            for e in emails:
+                out.setdefault(e, []).append(feed)
+        return {e: sorted(out[e]) for e in sorted(out)}
+
     def add(self, feed: str, email: str) -> str:
         """Add an email to a feed. Returns 'added', 'exists', or 'invalid'."""
         email = (email or "").strip().lower()

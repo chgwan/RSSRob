@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Email subscribers · RSSRob{% endblock %}
+{% block content %}
+
+  <h1 style="margin:.2rem 0 .1rem; font-size:1.25rem;">Email subscribers</h1>
+  <p class="count">{{ by_email|length }} email{{ '' if by_email|length == 1 else 's' }} ·
+     the feeds each address is subscribed to</p>
+
+  {% if by_email %}
+  <table>
+    <thead><tr><th>Email</th><th>Subscribed feeds</th></tr></thead>
+    <tbody>
+      {% for email, feeds in by_email.items() %}
+      <tr>
+        <td style="white-space:nowrap"><strong>{{ email }}</strong></td>
+        <td>
+          {% for feed in feeds %}
+            <span class="feed-chip">
+              <a href="{{ url_for('index', site=feed, show_subs=1) }}">{{ feed }}</a>
+              <form method="post" action="{{ url_for('unsubscribe') }}" style="display:inline">
+                <input type="hidden" name="site" value="{{ feed }}">
+                <input type="hidden" name="email" value="{{ email }}">
+                <button type="submit" title="unsubscribe {{ email }} from {{ feed }}">×</button>
+              </form>
+            </span>
+          {% endfor %}
+          <span class="count">({{ feeds|length }})</span>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <div class="notice">No subscribers yet. Readers subscribe from a feed's
+      <a href="{{ url_for('index') }}">preview page</a>.</div>
+  {% endif %}
+
+  <style>
+    .feed-chip { display:inline-flex; align-items:center; gap:.25rem;
+      border:1px solid var(--line); border-radius:999px; padding:.1rem .25rem .1rem .6rem;
+      margin:.15rem .25rem .15rem 0; font-size:.85rem; }
+    .feed-chip button { background:none; border:0; color:#cf222e; cursor:pointer;
+      font-size:.95rem; line-height:1; padding:0 .15rem; }
+    .feed-chip button:hover { color:#a40e26; }
+  </style>
+
+{% endblock %}
