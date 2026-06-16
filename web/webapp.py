@@ -38,6 +38,7 @@ from rssrob.config import ConfigError, load_config, normalize_proxy
 from rssrob.extract import extract_items
 from rssrob.pipeline import obtain_items
 from rssrob.rss import parse_feed
+from rssrob.subscribers import Subscribers
 
 # Reads config.yaml when present, otherwise the bundled example; saves always go
 # to config.yaml. Set RSSROB_CONFIG to override both read and write.
@@ -78,6 +79,9 @@ _ITEM_CACHE: dict = {}         # url -> (full_title, description) cached across 
 # Per-feed proxies live in each site's `proxy:` config. Set RSSROB_PROXY or pass
 # --proxy / --proxy-port on the CLI (see __main__) for the global default.
 PROXY_URL = os.environ.get("RSSROB_PROXY") or None
+
+# Per-feed email subscriber list (gitignored; the notify job sends to these).
+SUBS = Subscribers(str(REPO_ROOT / "subscribers.json"))
 
 
 # Defaults for the selector playground (the IPP 通知公告 example).
@@ -234,7 +238,24 @@ def index():
         source=main_source,
         fetch_error=main_error,
         display_title=site.title or feed_title or site.name,
+        subscriber_count=len(SUBS.list(site.name)),
+        subscribed=request.args.get("subscribed"),
+        sub_error=request.args.get("sub_error"),
     )
+
+
+@app.route("/subscribe", methods=["POST"])
+def subscribe():
+    """Add an email to a feed's subscriber list (for email update notifications)."""
+    site = (request.form.get("site") or "").strip()
+    email = (request.form.get("email") or "").strip()
+    if not site:
+        abort(400, description="missing feed")
+    status = SUBS.add(site, email)
+    if status == "added":
+        return redirect(url_for("index", site=site, subscribed=email))
+    msg = "already subscribed" if status == "exists" else "please enter a valid email address"
+    return redirect(url_for("index", site=site, sub_error=msg))
 
 
 def _terms(s):

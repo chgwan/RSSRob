@@ -326,8 +326,34 @@ python web/webapp.py                       # open http://127.0.0.1:5000/
 python web/webapp.py --proxy-port 7890     # default proxy for feeds that need one
 ```
 
-- `/` — feed preview (full titles + descriptions, follows article links).
+- `/` — feed preview (full titles + descriptions, follows article links). Each feed has a **subscribe** form so readers can sign up for email updates.
 - `/playground` — live **selector & filter playground** for HTML *and* RSS sources; **Save** writes a tested site (selectors, `filter`, `proxy`) as one file per feed into `configs/` (or `config.yaml` in single-file mode).
+
+---
+
+## Email notifications
+
+Readers subscribe to a feed via the **subscribe** form on its preview page; addresses are stored in `subscribers.json` (gitignored — never committed).
+
+Sending uses SMTP, configured through **environment variables** so secrets stay out of git:
+
+| Variable | Example | Notes |
+|----------|---------|-------|
+| `RSSROB_SMTP_HOST` | `smtp.gmail.com` | required |
+| `RSSROB_SMTP_PORT` | `587` | default `587` |
+| `RSSROB_SMTP_USER` | `you@gmail.com` | username for auth |
+| `RSSROB_SMTP_PASSWORD` | *app password* | Gmail needs an [App Password](https://myaccount.google.com/apppasswords), not your account password |
+| `RSSROB_SMTP_FROM` | `you@gmail.com` | optional, defaults to `USER` |
+| `RSSROB_SMTP_STARTTLS` / `RSSROB_SMTP_SSL` | `true` | STARTTLS (587) or implicit TLS (465) |
+
+For local testing, copy the template and fill it in — the `.env` file is gitignored:
+
+```bash
+cp .env.example .env        # then edit .env and paste your app password
+python -m rssrob.notify --to you@gmail.com --subject "RSSRob test" --body "hello"
+```
+
+`rssrob.notify` auto-loads `.env` for convenience (pass `--no-dotenv` to skip it); **real environment variables always take precedence**, so in production just export the `RSSROB_SMTP_*` vars and skip the file.
 
 ---
 

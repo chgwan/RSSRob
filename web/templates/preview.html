@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}{{ display_title }} · RSSRob preview{% endblock %}
+{% block content %}
+
+  <h1 style="margin:.2rem 0 .1rem; font-size:1.25rem;">
+    {{ display_title }}
+    {% if source == "live" %}
+      <span class="badge live">● live</span>
+    {% elif source == "saved" %}
+      <span class="badge saved">● saved copy</span>
+    {% endif %}
+  </h1>
+
+  {% if source == "saved" %}
+    <div class="notice">
+      Live fetch failed, showing the saved local copy.<br>
+      <code>{{ fetch_error }}</code>
+    </div>
+  {% endif %}
+
+  {% if subscribed %}
+    <div class="ok-banner">✓ Subscribed <strong>{{ subscribed }}</strong> to email updates for this feed.</div>
+  {% endif %}
+  {% if sub_error %}
+    <div class="notice">{{ sub_error }}</div>
+  {% endif %}
+
+  <form class="subscribe" method="post" action="{{ url_for('subscribe') }}">
+    <input type="hidden" name="site" value="{{ site.name }}">
+    <span class="sub-label">📧 Get email updates for this feed:</span>
+    <input type="email" name="email" placeholder="you@example.com" required>
+    <button type="submit">Subscribe</button>
+    {% if subscriber_count %}<span class="sub-count">{{ subscriber_count }} subscribed</span>{% endif %}
+  </form>
+  <style>
+    .ok-banner { border-left:4px solid #1a7f37; background:#dafbe1; color:#1a4d2e;
+      padding:.6rem .9rem; border-radius:6px; margin:1rem 0; font-size:.9rem; }
+    form.subscribe { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap;
+      background:#f6f8fa; border:1px solid #d0d7de; border-radius:10px;
+      padding:.6rem .9rem; margin:1rem 0; }
+    form.subscribe .sub-label { font-size:.9rem; color:#1f2328; }
+    form.subscribe input[type=email] { flex:1; min-width:200px; padding:.4rem .55rem;
+      border:1px solid #d0d7de; border-radius:7px; font-size:.9rem; }
+    form.subscribe button { background:#0353a4; color:#fff; border:0;
+      padding:.45rem 1.1rem; border-radius:7px; font-size:.9rem; cursor:pointer; }
+    form.subscribe .sub-count { font-size:.8rem; color:#656d76; }
+  </style>
+
+  <div class="meta">
+    <div>Source: <a href="{{ site.url }}" target="_blank">{{ site.url }}</a>
+      <span class="count">· type <code>{{ site.type }}</code></span></div>
+    {% if site.type == "html" %}
+      <div>Item selector: <code>{{ site.item }}</code></div>
+      <div>Fields:
+        {% for name, sel in site.fields.items() %}
+          {{ name }} <code>{{ sel }}</code>{% if not loop.last %} · {% endif %}
+        {% endfor %}
+      </div>
+    {% else %}
+      <div>Parsed as an existing RSS/Atom feed (no selectors needed).</div>
+    {% endif %}
+  </div>
+
+  <p class="count">{{ entries|length }} item{{ '' if entries|length == 1 else 's' }} selected</p>
+
+  {% if entries %}
+  <table>
+    <thead><tr><th>#</th><th>Date</th><th>Title &amp; description</th></tr></thead>
+    <tbody>
+      {% for e in entries %}
+      <tr>
+        <td class="n">{{ loop.index }}</td>
+        <td class="d">{{ e.item.date or "—" }}</td>
+        <td class="t">
+          {% if e.item.link %}
+            <a href="{{ e.item.link }}" target="_blank">{{ e.title or "(untitled)" }}</a>
+          {% else %}
+            {{ e.title or "(untitled)" }}
+          {% endif %}
+          {% if e.desc %}
+            <div class="summary">{{ e.desc }}</div>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <div class="notice">No items matched. Check the selectors for this site.</div>
+  {% endif %}
+
+{% endblock %}
