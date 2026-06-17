@@ -131,3 +131,42 @@ def test_login_ignores_open_redirect_next(tmp_path):
                                   data={"username": "admin", "password": "s3cret"})
     assert r.status_code == 302
     assert "evil" not in r.headers["Location"]
+
+
+def _login(wa, password="s3cret"):
+    client = wa.app.test_client()
+    client.post("/login", data={"username": "admin", "password": password})
+    return client
+
+
+def test_account_requires_login(tmp_path):
+    wa = _wa(tmp_path); _set_cred(wa)
+    r = wa.app.test_client().get("/account")
+    assert r.status_code == 302 and "/login" in r.headers["Location"]
+
+
+def test_account_wrong_current_password_changes_nothing(tmp_path):
+    wa = _wa(tmp_path); _set_cred(wa)
+    client = _login(wa)
+    r = client.post("/account", data={"current": "WRONG",
+                                      "username": "admin",
+                                      "password": "newpass", "confirm": "newpass"})
+    assert r.status_code == 200
+    assert b"current password is incorrect" in r.data
+    cred = admin_credential.load(wa.ADMIN_CRED_PATH)
+    assert admin_credential.verify(cred, "admin", "s3cret")     # unchanged
+
+
+def test_account_change_password_succeeds_and_preserves_secret_key(tmp_path):
+    wa = _wa(tmp_path); _set_cred(wa)
+    before = admin_credential.load(wa.ADMIN_CRED_PATH).secret_key
+    client = _login(wa)
+    r = client.post("/account", data={"current": "s3cret",
+                                      "username": "admin",
+                                      "password": "newpass", "confirm": "newpass"})
+    assert r.status_code == 200
+    cred = admin_credential.load(wa.ADMIN_CRED_PATH)
+    assert admin_credential.verify(cred, "admin", "newpass")
+    assert not admin_credential.verify(cred, "admin", "s3cret")
+    assert cred.secret_key == before                            # key preserved
+    assert client.get("/about").status_code == 200              # session still valid
