@@ -160,6 +160,36 @@ def test_obtain_items_twitter_without_client_raises():
         obtain_items(site, fetcher=None)
 
 
+def test_run_cycle_prunes_old_items(tmp_path, fixtures, make_fetcher):
+    xml = (fixtures / "sample_rss.xml").read_bytes()
+    fetcher = make_fetcher({"http://example.com/feed.xml": xml})
+    store = Store(str(tmp_path / "db.sqlite"))
+    out = str(tmp_path / "feeds")
+    # pre-seed an ancient item that the cycle should prune
+    from rssrob.models import Item
+    store.insert_new("feedy", [Item(id="ancient", title="ancient",
+                                    date="Wed, 01 Jan 2010 00:00:00 GMT")], now=1.0)
+    site = Site(name="feedy", url="http://example.com/feed.xml", type="rss",
+                max_age_days=365)
+    run_cycle(site, store, fetcher, out, now=1_750_000_000.0)
+    ids = [r.id for r in store.recent("feedy", 50)]
+    assert "ancient" not in ids          # pruned by recency
+
+
+def test_run_cycle_keeps_all_when_max_age_zero(tmp_path, fixtures, make_fetcher):
+    xml = (fixtures / "sample_rss.xml").read_bytes()
+    fetcher = make_fetcher({"http://example.com/feed.xml": xml})
+    store = Store(str(tmp_path / "db.sqlite"))
+    out = str(tmp_path / "feeds")
+    from rssrob.models import Item
+    store.insert_new("feedy", [Item(id="ancient", title="ancient",
+                                    date="Wed, 01 Jan 2010 00:00:00 GMT")], now=1.0)
+    site = Site(name="feedy", url="http://example.com/feed.xml", type="rss",
+                max_age_days=0)
+    run_cycle(site, store, fetcher, out, now=1_750_000_000.0)
+    assert "ancient" in [r.id for r in store.recent("feedy", 50)]
+
+
 def test_run_cycle_drops_filtered_items_before_store(tmp_path, fixtures, make_fetcher):
     from rssrob.filters import FeedFilter
     xml = (fixtures / "sample_rss.xml").read_bytes()

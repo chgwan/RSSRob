@@ -46,6 +46,8 @@ def run_cycle(site: Site, store: Store, fetcher, output_dir: str,
     if site.filter:
         items = [it for it in items if site.filter.keeps(it)]
     inserted = store.insert_new(site.name, items, now)
+    if site.max_age_days:
+        store.prune_old(site.name, site.max_age_days * 86400, now)
 
     effective = site
     if site.type in ("rss", "wechat", "twitter") and (site.title is None or site.description is None):

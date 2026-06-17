@@ -203,3 +203,20 @@ def test_no_filter_means_none(tmp_path):
     cfg = load_config(_write(tmp_path,
         "sites:\n  - {name: f, type: rss, url: 'http://a/'}\n"))
     assert cfg.sites[0].filter is None
+
+
+def test_max_age_days_default_is_one_year(tmp_path):
+    cfg = load_config(_write(tmp_path,
+        "sites:\n  - {name: f, type: rss, url: 'http://a/'}\n"))
+    assert cfg.sites[0].max_age_days == 365
+
+
+def test_max_age_days_override_and_global_default(tmp_path):
+    cfg = load_config(_write(tmp_path,
+        "defaults:\n  max_age_days: 30\n"
+        "sites:\n"
+        "  - {name: a, type: rss, url: 'http://a/'}\n"
+        "  - {name: b, type: rss, url: 'http://b/', max_age_days: 0}\n"))
+    by = {s.name: s for s in cfg.sites}
+    assert by["a"].max_age_days == 30     # inherits defaults
+    assert by["b"].max_age_days == 0      # per-feed override (keep forever)
