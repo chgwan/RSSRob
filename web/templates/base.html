@@ -245,6 +245,7 @@
       <div class="rail-foot">
         {% if admin_user %}
         <div class="rail-account" style="margin-bottom:.5rem;">
+          <a href="{{ url_for('account') }}" style="color:var(--rail-fg);display:block;margin-bottom:.3rem;">{{ admin_user }} · account</a>
           <form method="post" action="{{ url_for('logout') }}" style="display:inline;">
             <button type="submit" style="background:none;border:0;padding:0;font:inherit;color:var(--rail-muted);text-decoration:underline;cursor:pointer;">log out</button>
           </form>

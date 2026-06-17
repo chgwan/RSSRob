@@ -222,6 +222,32 @@ def setup():
     return render_template("setup.html", error=error)
 
 
+@app.route("/account", methods=["GET", "POST"])
+def account():
+    cred = _load_admin()                              # the gate guarantees not None
+    error = None
+    saved = False
+    if request.method == "POST":
+        current = request.form.get("current") or ""
+        new_username = (request.form.get("username") or "").strip() or cred.username
+        new_password = request.form.get("password") or ""
+        confirm = request.form.get("confirm") or ""
+        if not admin_credential.verify(cred, cred.username, current):
+            error = "current password is incorrect"
+        elif not new_password:
+            error = "new password must not be empty"
+        elif new_password != confirm:
+            error = "new passwords do not match"
+        else:
+            cred = admin_credential.create(new_username, new_password,
+                                           time.time(), secret_key=cred.secret_key)
+            admin_credential.save(ADMIN_CRED_PATH, cred)
+            session["user"] = cred.username           # stay logged in if name changed
+            saved = True
+    return render_template("account.html", active=None, sites=_safe_sites(),
+                           username=cred.username, error=error, saved=saved)
+
+
 def _strip_html(s):
     if s and "<" in s:
         try:
