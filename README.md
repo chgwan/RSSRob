@@ -287,6 +287,7 @@ term is a regular expression (a malformed pattern is skipped, not fatal). The
 one year) from the store on each cycle, by published date (falling back to
 `first_seen`). Override per feed with `max_age_days`, or set
 `defaults.max_age_days` globally; `0` (or null) keeps everything.
+Items are aged by their published date, so a source that backfills entries with old dates will have those pruned the first time they're seen, not retained for a year.
 
 ---
 

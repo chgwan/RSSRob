@@ -220,3 +220,9 @@ def test_max_age_days_override_and_global_default(tmp_path):
     by = {s.name: s for s in cfg.sites}
     assert by["a"].max_age_days == 30     # inherits defaults
     assert by["b"].max_age_days == 0      # per-feed override (keep forever)
+
+
+def test_negative_max_age_days_clamped_to_zero(tmp_path):
+    cfg = load_config(_write(tmp_path,
+        "sites:\n  - {name: f, type: rss, url: 'http://a/', max_age_days: -1}\n"))
+    assert cfg.sites[0].max_age_days == 0   # negative clamped -> keep forever (no prune)

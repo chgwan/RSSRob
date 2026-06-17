@@ -193,5 +193,5 @@ def _build_site(raw: dict, defaults: dict) -> Site:
         proxy=normalize_proxy(raw.get("proxy", defaults.get("proxy"))),
         article=raw.get("article") or {},
         filter=filters.build_filter(raw.get("filter")),
-        max_age_days=raw.get("max_age_days", defaults.get("max_age_days", 365)),
+        max_age_days=max(0, raw.get("max_age_days", defaults.get("max_age_days", 365))),
     )
