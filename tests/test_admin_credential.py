@@ -56,3 +56,17 @@ def test_load_missing_returns_none(tmp_path):
 def test_create_preserves_passed_secret_key():
     cred = ac.create("admin", "pw", now=0.0, secret_key="KEEP")
     assert cred.secret_key == "KEEP"
+
+
+def test_load_partial_json_returns_none(tmp_path):
+    import json
+    path = tmp_path / "admin.json"
+    path.write_text(json.dumps({"password_hash": "pbkdf2_sha256$1$aa$bb"}),
+                    encoding="utf-8")
+    assert ac.load(str(path)) is None
+
+
+def test_load_corrupt_json_returns_none(tmp_path):
+    path = tmp_path / "admin.json"
+    path.write_text("{not valid json", encoding="utf-8")
+    assert ac.load(str(path)) is None
