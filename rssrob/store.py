@@ -57,6 +57,21 @@ class Store:
         ).fetchall()
         return [StoredItem(**dict(r)) for r in rows]
 
+    def prune_old(self, feed: str, max_age_seconds: float, now: float) -> int:
+        """Delete items older than now - max_age_seconds for one feed.
+
+        Age uses COALESCE(published, first_seen) — the same fallback recent()
+        orders by — so a freshly seen, undated item is not pruned immediately.
+        Returns the number of rows deleted."""
+        cutoff = now - max_age_seconds
+        cur = self.conn.execute(
+            "DELETE FROM items WHERE feed = ? "
+            "AND COALESCE(published, first_seen) < ?",
+            (feed, cutoff),
+        )
+        self.conn.commit()
+        return cur.rowcount
+
     def close(self) -> None:
         self.conn.close()
 
