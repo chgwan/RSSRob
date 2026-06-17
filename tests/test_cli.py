@@ -53,3 +53,112 @@ def test_bad_config_returns_2(tmp_path):
     bad.write_text("sites:\n  - {name: x}\n", encoding="utf-8")  # missing url
     rc = main(["--config", str(bad), "run-once", "x"])
     assert rc == 2
+
+
+def test_wechat_search_prints_matches(capsys, monkeypatch):
+    from rssrob import cli
+    from rssrob.wechat import Account
+
+    class FakeClient:
+        def search_accounts(self, name):
+            return [Account(id="MzAx==", name="某号", description="d")]
+
+    monkeypatch.setattr(cli, "build_wechat_client", lambda: FakeClient())
+    rc = cli.main(["wechat-search", "某"])
+    out = capsys.readouterr().out
+    assert rc == 0 and "MzAx==" in out and "某号" in out
+
+
+def test_wechat_search_no_credential_returns_2(capsys, monkeypatch):
+    from rssrob import cli
+    from rssrob.wechat import WeChatAuthError
+
+    class FakeClient:
+        def search_accounts(self, name):
+            raise WeChatAuthError("no credential")
+
+    monkeypatch.setattr(cli, "build_wechat_client", lambda: FakeClient())
+    rc = cli.main(["wechat-search", "某"])
+    assert rc == 2
+
+
+def test_wechat_search_save_writes_feed(tmp_path, capsys, monkeypatch):
+    from rssrob import cli
+    from rssrob.wechat import Account
+
+    class FakeClient:
+        def search_accounts(self, name):
+            return [Account(id="MzAx==", name="某号", description="一个测试公众号")]
+
+    monkeypatch.setattr(cli, "build_wechat_client", lambda: FakeClient())
+    monkeypatch.setattr("builtins.input", lambda *a: "1")
+    cfgdir = tmp_path / "configs"
+    cfgdir.mkdir()
+    rc = cli.main(["--config", str(cfgdir), "wechat-search", "某", "--save", "myoa"])
+    assert rc == 0
+    written = (cfgdir / "myoa.yaml").read_text(encoding="utf-8")
+    assert "type: wechat" in written and "MzAx==" in written and "某号" in written
+    assert "description: 一个测试公众号" in written   # account intro carried over
+
+
+def test_wechat_login_cookie_saves_credential(tmp_path, capsys, monkeypatch):
+    from rssrob import cli
+    from rssrob import wechat_credential
+    cred_path = str(tmp_path / "cred.json")
+    monkeypatch.setattr(cli, "WECHAT_CRED_PATH", cred_path)
+    rc = cli.main(["wechat-login", "--cookie", "slave_sid=abc", "--token", "987654321"])
+    assert rc == 0
+    cred = wechat_credential.load(cred_path)
+    assert cred is not None and cred.cookie == "slave_sid=abc" and cred.token == "987654321"
+
+
+def test_wechat_login_interactive_prompts_and_saves(tmp_path, monkeypatch):
+    from rssrob import cli
+    from rssrob import wechat_credential
+    cred_path = str(tmp_path / "cred.json")
+    monkeypatch.setattr(cli, "WECHAT_CRED_PATH", cred_path)
+    monkeypatch.setattr(cli, "_render_qr", lambda *a, **k: None)
+    answers = iter(["123456789", "slave_sid=abc; slave_user=gh_x"])
+    monkeypatch.setattr("builtins.input", lambda *a: next(answers))
+    rc = cli.main(["wechat-login"])
+    assert rc == 0
+    cred = wechat_credential.load(cred_path)
+    assert cred.token == "123456789" and cred.cookie.startswith("slave_sid=abc")
+
+
+def test_wechat_login_no_stdin_prints_help(capsys, monkeypatch):
+    from rssrob import cli
+    monkeypatch.setattr(cli, "_render_qr", lambda *a, **k: None)
+
+    def no_stdin(*a):
+        raise EOFError()
+    monkeypatch.setattr("builtins.input", no_stdin)
+    rc = cli.main(["wechat-login"])
+    out = capsys.readouterr().out
+    assert rc == 0 and "token" in out and "立即注册" in out
+
+
+def test_wechat_login_missing_token_returns_2(capsys, monkeypatch):
+    from rssrob import cli
+    rc = cli.main(["wechat-login", "--cookie", "slave_sid=abc"])  # no --token
+    assert rc == 2
+
+
+def test_twitter_login_saves_credential(tmp_path, monkeypatch):
+    from rssrob import cli
+    cred_path = tmp_path / "tw.json"
+    monkeypatch.setattr("rssrob.cli.TWITTER_CRED_PATH", str(cred_path))
+    rc = cli.main(["twitter-login", "--cookie",
+                   "auth_token=abc; ct0=xyz", "--proxy", "7890"])
+    assert rc == 0
+    import json
+    saved = json.loads(cred_path.read_text(encoding="utf-8"))
+    assert saved["auth_token"] == "abc" and saved["csrf_token"] == "xyz"
+    assert saved["proxy"] == "7890"
+
+
+def test_twitter_login_rejects_cookie_without_tokens(tmp_path, monkeypatch):
+    from rssrob import cli
+    monkeypatch.setattr("rssrob.cli.TWITTER_CRED_PATH", str(tmp_path / "tw.json"))
+    rc = cli.main(["twitter-login", "--cookie", "lang=en"])
+    assert rc == 2

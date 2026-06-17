@@ -8,10 +8,14 @@ from .config import Site
 
 
 def build_feed(site: Site, items) -> bytes:
+    # Some sources (wechat) have no public site URL; synthesize stable, valid
+    # channel id/link values so feedgen's required fields are satisfied.
+    channel_id = site.url or f"urn:rssrob:{site.name}"
+    channel_link = site.url or "https://mp.weixin.qq.com/"
     fg = FeedGenerator()
-    fg.id(site.url)
+    fg.id(channel_id)
     fg.title(site.title or site.name)
-    fg.link(href=site.url, rel="alternate")
+    fg.link(href=channel_link, rel="alternate")
     fg.description(site.description or site.title or site.name)
     for it in items:
         # append (not feedgen's default prepend) to preserve the store's

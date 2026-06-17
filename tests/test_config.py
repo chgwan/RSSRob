@@ -137,6 +137,25 @@ def test_load_config_directory_duplicate_name(tmp_path):
         load_config(str(d))
 
 
+def test_wechat_site_valid_without_url(tmp_path):
+    cfg = load_config(_write(tmp_path,
+        "sites:\n  - {name: oa, type: wechat, account_id: 'MzAx==', account_name: '某号'}\n"))
+    s = cfg.sites[0]
+    assert s.type == "wechat" and s.account_id == "MzAx=="
+    assert s.account_name == "某号" and s.url is None
+
+
+def test_wechat_missing_account_id_raises(tmp_path):
+    with pytest.raises(ConfigError):
+        load_config(_write(tmp_path, "sites:\n  - {name: oa, type: wechat}\n"))
+
+
+def test_wechat_title_defaults_to_account_name(tmp_path):
+    cfg = load_config(_write(tmp_path,
+        "sites:\n  - {name: oa, type: wechat, account_id: x, account_name: '某号'}\n"))
+    assert cfg.sites[0].title == "某号"
+
+
 def test_per_feed_proxy(tmp_path):
     cfg = load_config(_write(tmp_path, PROXY_CFG))
     by = {s.name: s for s in cfg.sites}
@@ -146,3 +165,18 @@ def test_per_feed_proxy(tmp_path):
     assert by["httpfull"].proxy == "http://1.2.3.4:8888"       # full http url
     assert by["hostport"].proxy == "http://1.2.3.4:9999"       # bare host:port -> http
     assert by["inherits"].proxy == "http://127.0.0.1:8080"     # inherits defaults.proxy
+
+
+def test_twitter_site_requires_username():
+    from rssrob.config import _build_config
+    with pytest.raises(ConfigError):
+        _build_config({"sites": [{"name": "t", "type": "twitter"}]})
+
+
+def test_twitter_site_builds_with_username():
+    from rssrob.config import _build_config
+    cfg = _build_config({"sites": [
+        {"name": "elon", "type": "twitter", "username": "elonmusk"}]})
+    site = cfg.sites[0]
+    assert site.type == "twitter" and site.username == "elonmusk"
+    assert site.title == "@elonmusk"

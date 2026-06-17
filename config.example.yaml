@@ -1,5 +1,5 @@
-output_dir: ./feeds
-state_db: ./rssrob.db
+output_dir: ./var/feeds
+state_db: ./var/rssrob.db
 http:
   host: 127.0.0.1
   port: 8080
@@ -26,3 +26,11 @@ sites:
     type: rss
     url: https://blog.python.org/feeds/posts/default
     interval: 3600
+
+  # Twitter/X account: needs a saved X session cookie (rssrob twitter-login)
+  - name: elon
+    type: twitter
+    username: elonmusk
+    interval: 1800
+    max_items: 30
+    # proxy: 7890        # optional; X often needs a proxy

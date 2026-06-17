@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Backup / Restore · RSSRob{% endblock %}
+{% block content %}
+<h2 style="margin:.2rem 0 1rem">Backup &amp; Restore</h2>
+
+{% if restored %}
+  <div class="meta" style="border-left:4px solid var(--green);">
+    ✅ Restored <strong>{{ restored }}</strong> file(s). Restart
+    <code>rssrob serve</code> so the new config + database take effect.
+  </div>
+{% endif %}
+{% if restore_error %}
+  <div class="error">⚠️ {{ restore_error }}</div>
+{% endif %}
+
+<p class="count">A backup bundles your <strong>config</strong> and all runtime
+  state under <code>var/</code> — the SQLite item history (<code>rssrob.db</code>),
+  generated feeds, the email subscriber list, digest state, and the 公众号
+  credential — into one <code>.zip</code>. Use it to move to another machine or
+  rebuild after a reinstall.</p>
+
+<div style="display:flex; gap:2rem; flex-wrap:wrap; align-items:flex-start;
+            margin-top:1rem;">
+  <div style="flex:1; min-width:260px;">
+    <h3 style="margin:.2rem 0 .5rem">Download a backup</h3>
+    <p class="count">Saves the current config + <code>var/</code> as a timestamped
+      zip.</p>
+    <a href="{{ url_for('backup_download') }}">
+      <button style="padding:.5rem 1.1rem;">⬇ Download backup .zip</button>
+    </a>
+    <div class="notice" style="margin-top:.8rem;">
+      ⚠️ The zip contains <strong>secrets</strong> (your 公众号 cookie/token and
+      subscriber emails). Keep it private.
+    </div>
+  </div>
+
+  <div style="flex:1; min-width:260px;">
+    <h3 style="margin:.2rem 0 .5rem">Restore from a backup</h3>
+    <p class="count">Extracts the zip back into place,
+      <strong>overwriting</strong> the current config + <code>var/</code>.</p>
+    <form method="post" action="{{ url_for('backup_restore') }}"
+          enctype="multipart/form-data">
+      <input type="file" name="backup" accept=".zip" required
+             style="display:block; margin-bottom:.6rem;">
+      <button style="padding:.5rem 1.1rem;"
+              onclick="return confirm('Overwrite the current config and var/ with this backup?');">
+        ⬆ Upload &amp; restore
+      </button>
+    </form>
+    <div class="count" style="margin-top:.8rem;">After restoring, restart
+      <code>rssrob serve</code> — the running scheduler holds the old database
+      connection until then.</div>
+  </div>
+</div>
+{% endblock %}

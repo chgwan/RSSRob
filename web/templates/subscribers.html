@@ -4,17 +4,50 @@
 
   <h1 style="margin:.2rem 0 .1rem; font-size:1.25rem;">Email subscribers</h1>
   <p class="count">{{ by_email|length }} email{{ '' if by_email|length == 1 else 's' }} ·
-     the feeds each address is subscribed to</p>
+     digest frequency is per email (applies to all its feeds)</p>
+
+  {% if updated %}
+    <div class="ok-banner">✓ Updated frequency for <strong>{{ updated }}</strong>.</div>
+  {% endif %}
+  {% if added %}
+    <div class="ok-banner">✓ Subscribed <strong>{{ added }}</strong>.</div>
+  {% endif %}
+  {% if add_error %}
+    <div class="notice">{{ add_error }}</div>
+  {% endif %}
+
+  {% if sites %}
+  <form class="add-sub" method="post" action="{{ url_for('add_feed') }}">
+    <strong>Add a subscriber:</strong>
+    <input type="email" name="email" placeholder="you@example.com" required>
+    <span>to</span>
+    <select name="site" required>
+      <option value="" disabled selected>choose a feed…</option>
+      {% for s in sites %}<option value="{{ s.name }}">{{ s.name }}</option>{% endfor %}
+    </select>
+    <span>every</span>
+    <input type="number" name="hours" value="24" min="1" step="1" title="frequency (hours)">
+    <span>hours</span>
+    <button type="submit">add</button>
+  </form>
+  {% endif %}
 
   {% if by_email %}
   <table>
-    <thead><tr><th>Email</th><th>Subscribed feeds</th></tr></thead>
+    <thead><tr><th>Email</th><th>Every (hours)</th><th>Subscribed feeds</th></tr></thead>
     <tbody>
-      {% for email, feeds in by_email.items() %}
+      {% for email, info in by_email.items() %}
       <tr>
         <td style="white-space:nowrap"><strong>{{ email }}</strong></td>
         <td>
-          {% for feed in feeds %}
+          <form method="post" action="{{ url_for('set_frequency') }}" class="freq-form">
+            <input type="hidden" name="email" value="{{ email }}">
+            <input type="number" name="hours" value="{{ info.hours }}" min="1" step="1">
+            <button type="submit">update</button>
+          </form>
+        </td>
+        <td>
+          {% for feed in info.feeds %}
             <span class="feed-chip">
               <a href="{{ url_for('index', site=feed, show_subs=1) }}">{{ feed }}</a>
               <form method="post" action="{{ url_for('unsubscribe') }}" style="display:inline">
@@ -24,7 +57,16 @@
               </form>
             </span>
           {% endfor %}
-          <span class="count">({{ feeds|length }})</span>
+          {% set available = sites | rejectattr('name', 'in', info.feeds) | list %}
+          {% if available %}
+            <form method="post" action="{{ url_for('add_feed') }}" class="add-feed">
+              <input type="hidden" name="email" value="{{ email }}">
+              <select name="site">
+                {% for s in available %}<option value="{{ s.name }}">{{ s.name }}</option>{% endfor %}
+              </select>
+              <button type="submit" title="subscribe {{ email }} to this feed">+ add</button>
+            </form>
+          {% endif %}
         </td>
       </tr>
       {% endfor %}
@@ -36,6 +78,30 @@
   {% endif %}
 
   <style>
+    .ok-banner { border-left:4px solid var(--green); background:#dafbe1; color:#1a4d2e;
+      padding:.6rem .9rem; border-radius:6px; margin:1rem 0; font-size:.9rem; }
+    .freq-form { display:inline-flex; align-items:center; gap:.35rem; margin:0; }
+    .freq-form input { width:3.6rem; padding:.3rem .4rem; border:1px solid var(--line);
+      border-radius:7px; font-size:.9rem; text-align:right; }
+    .freq-form button { background:none; border:1px solid var(--line); border-radius:7px;
+      padding:.3rem .7rem; font-size:.82rem; cursor:pointer; color:var(--accent); }
+    .freq-form button:hover { border-color:var(--accent); }
+    form.add-sub { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap;
+      background:var(--bg); border:1px solid var(--line); border-radius:10px;
+      padding:.6rem .9rem; margin:1rem 0; font-size:.9rem; }
+    form.add-sub input[type=email] { flex:1; min-width:180px; padding:.4rem .55rem;
+      border:1px solid var(--line); border-radius:7px; font-size:.9rem; }
+    form.add-sub input[type=number] { width:3.6rem; padding:.4rem; text-align:right;
+      border:1px solid var(--line); border-radius:7px; }
+    form.add-sub select { padding:.4rem; border:1px solid var(--line); border-radius:7px; }
+    form.add-sub button { background:var(--accent); color:#fff; border:0;
+      padding:.45rem 1.1rem; border-radius:7px; cursor:pointer; }
+    form.add-feed { display:inline-flex; gap:.25rem; margin:.15rem 0 0 .15rem; vertical-align:middle; }
+    form.add-feed select { font-size:.8rem; padding:.1rem .25rem; border:1px solid var(--line);
+      border-radius:7px; }
+    form.add-feed button { background:none; border:1px dashed var(--line); border-radius:999px;
+      color:var(--accent); font-size:.78rem; padding:.05rem .5rem; cursor:pointer; }
+    form.add-feed button:hover { border-color:var(--accent); }
     .feed-chip { display:inline-flex; align-items:center; gap:.25rem;
       border:1px solid var(--line); border-radius:999px; padding:.1rem .25rem .1rem .6rem;
       margin:.15rem .25rem .15rem 0; font-size:.85rem; }

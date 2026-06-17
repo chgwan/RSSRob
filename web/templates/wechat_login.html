@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}WeChat 订阅号 · RSSRob{% endblock %}
+{% block content %}
+<h2 style="margin:.2rem 0 1rem">WeChat 订阅号 (via 公众号平台)</h2>
+
+{% if logged_in_token %}
+  <div class="meta" style="border-left:4px solid var(--green);">
+    ✅ Logged in (token <code>{{ logged_in_token }}</code>). Search for any 公众号
+    below. Re-paste a fresh cookie + token any time the session expires.
+  </div>
+{% endif %}
+{% if pasted %}
+  <div class="meta" style="border-left:4px solid var(--green);">
+    ✅ Saved credential (token <code>{{ pasted }}</code>).
+  </div>
+{% endif %}
+{% if paste_error %}
+  <div class="error">⚠️ {{ paste_error }}</div>
+{% endif %}
+
+<div class="notice">
+  <strong>This needs your own registered 公众号 (WeChat Official Account).</strong>
+  RSSRob lists any account's articles through <em>your</em> 公众号 backend — it logs
+  in to mp.weixin.qq.com and uses its article-search API. A free 个人订阅号 is
+  enough, and RSSRob only ever <em>reads</em> (it never posts to your account).
+  <details style="margin-top:.5rem;">
+    <summary style="cursor:pointer; color:var(--accent);">Don't have one? How to register</summary>
+    <ol style="padding-left:1.2rem; margin:.45rem 0 0; line-height:1.65;">
+      <li>Open <a href="https://mp.weixin.qq.com/" target="_blank">mp.weixin.qq.com</a>
+        and click <b>立即注册</b> (Register).</li>
+      <li>Pick <b>订阅号</b> (Subscription Account) — it's free. An individual
+        (<b>个人</b>) subject type is fine and only needs a Chinese ID + a bank card
+        / face scan to verify.</li>
+      <li>Complete email + identity verification, then log in. You never have to
+        publish anything — RSSRob only reads the backend's search/article APIs.</li>
+    </ol>
+    <div class="count" style="margin-top:.35rem;">A 服务号 or company account also
+      works, but a personal 订阅号 is the quickest free option.</div>
+  </details>
+</div>
+
+<div style="display:flex; gap:1.5rem; flex-wrap:wrap; align-items:flex-start;">
+  <div>
+    <div style="width:160px; height:160px;">{{ qr_svg|safe }}</div>
+    <p class="count" style="max-width:160px;">Scan to open
+      <a href="{{ login_url }}" target="_blank">mp.weixin.qq.com</a>, or just open it
+      in this browser and log in.</p>
+  </div>
+  <div style="flex:1; min-width:320px;">
+    <p style="margin:.1rem 0 .5rem; font-weight:600;">After logging in, grab two things:</p>
+    <ol style="padding-left:1.1rem; margin:.2rem 0 .8rem; line-height:1.7;">
+      <li><b>token</b> — it's in the address bar:
+        <code>…/cgi-bin/home?...&amp;token=<mark>123456789</mark></code>.
+        Copy just the number.</li>
+      <li><b>cookie</b> — the whole <code>Cookie:</code> request header:
+        <div class="count" style="margin:.2rem 0 .1rem;">
+          DevTools (F12) → <b>Network</b> tab → click any request to
+          <code>mp.weixin.qq.com</code> → <b>Headers</b> → <b>Request Headers</b> →
+          copy the entire <code>Cookie</code> value.
+        </div>
+        <div class="count">⚠️ Don't use <code>document.cookie</code> — the important
+          login cookies are <code>HttpOnly</code> and won't show up there.</div>
+      </li>
+    </ol>
+    <form method="post" action="{{ url_for('wechat_paste') }}">
+      <label class="count" style="display:block; margin-bottom:.15rem;">token</label>
+      <input name="token" placeholder="e.g. 123456789"
+             style="width:100%; padding:.4rem; margin-bottom:.5rem;
+             border:1px solid var(--line); border-radius:6px; font:13px monospace;">
+      <label class="count" style="display:block; margin-bottom:.15rem;">cookie
+        (the full Cookie header)</label>
+      <textarea name="cookie" rows="3"
+        placeholder="appmsg_token=...; slave_sid=...; slave_user=gh_...; bizuin=...; data_bizuin=...; ..."
+        style="width:100%; font:13px monospace; border:1px solid var(--line);
+        border-radius:6px; padding:.5rem;"></textarea>
+      <button style="margin-top:.5rem; padding:.45rem .9rem;">Save credential</button>
+      <span class="count" style="margin-left:.5rem;">Stored locally in
+        <code>var/wechat_credential.json</code> (gitignored). Expires after a while —
+        just re-paste to refresh.</span>
+    </form>
+  </div>
+</div>
+
+<hr style="border:none; border-top:1px solid var(--line); margin:1.5rem 0;">
+
+<h3 style="margin:.2rem 0 .6rem">Find a 公众号</h3>
+<form id="search-form" onsubmit="return false;">
+  <input id="q" type="text" placeholder="account name, e.g. 某某公众号"
+         style="padding:.45rem .6rem; width:60%; border:1px solid var(--line); border-radius:6px;">
+  <button id="search-btn" style="padding:.45rem .9rem;">Search</button>
+</form>
+<div id="results" style="margin-top:1rem;"></div>
+
+<script>
+document.getElementById("search-btn").addEventListener("click", async () => {
+  const name = document.getElementById("q").value.trim();
+  const box = document.getElementById("results");
+  if (!name) { box.innerHTML = ""; return; }
+  box.innerHTML = "<p class='count'>searching…</p>";
+  const fd = new FormData(); fd.append("name", name);
+  const r = await fetch("{{ url_for('wechat_search') }}", { method: "POST", body: fd });
+  const d = await r.json();
+  if (d.error) { box.innerHTML = "<div class='notice'>" + d.error + "</div>"; return; }
+  if (!d.accounts || !d.accounts.length) { box.innerHTML = "<p class='count'>no matches.</p>"; return; }
+  box.innerHTML = "";
+  for (const a of d.accounts) {
+    const row = document.createElement("div");
+    row.className = "meta";
+    row.innerHTML =
+      "<div><b>" + (a.name || "(unnamed)") + "</b></div>" +
+      (a.desc ? "<div class='count'>" + a.desc + "</div>" : "") +
+      "<div style='margin-top:.5rem;'>" +
+      "feed name: <input class='fn' placeholder='feed-id' style='padding:.3rem;border:1px solid var(--line);border-radius:5px;'> " +
+      "<button class='save'>Save as feed</button> <span class='saved'></span></div>";
+    row.querySelector(".save").addEventListener("click", async () => {
+      const feed = row.querySelector(".fn").value.trim();
+      const note = row.querySelector(".saved");
+      if (!feed) { note.textContent = "enter a feed name"; return; }
+      const sf = new FormData();
+      sf.append("name", feed); sf.append("account_id", a.id);
+      sf.append("account_name", a.name || "");
+      sf.append("account_description", a.desc || "");
+      const sr = await fetch("{{ url_for('wechat_save') }}", { method: "POST", body: sf });
+      const sd = await sr.json();
+      note.textContent = sd.error ? ("⚠️ " + sd.error) : ("✅ saved → " + sd.path);
+    });
+    box.appendChild(row);
+  }
+});
+</script>
+{% endblock %}

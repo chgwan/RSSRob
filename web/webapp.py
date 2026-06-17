@@ -17,9 +17,11 @@ or set RSSROB_PROXY in the environment.
 """
 
 import argparse
+import io
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 # This file lives in web/; put the repo root on sys.path so `import rssrob`
@@ -31,14 +33,27 @@ import lxml.etree
 import lxml.html
 import requests
 import yaml
-from flask import Flask, abort, redirect, render_template, request, url_for
+from flask import (Flask, abort, jsonify, redirect, render_template, request,
+                   send_file, url_for)
 
 from rssrob.article import fetch_article
+from rssrob.backup import build_backup, restore_backup
 from rssrob.config import ConfigError, load_config, normalize_proxy
 from rssrob.extract import extract_items
 from rssrob.pipeline import obtain_items
 from rssrob.rss import parse_feed
+from rssrob.scheduler import build_twitter_client, build_wechat_client
 from rssrob.subscribers import Subscribers
+from rssrob.twitter import X_LOGIN_URL, TwitterAuthError
+from rssrob.twitter_credential import DEFAULT_PATH as TWITTER_CRED_PATH
+from rssrob.twitter_credential import credential_from_cookie
+from rssrob.twitter_credential import load as load_twitter_credential
+from rssrob.twitter_credential import save as save_twitter_credential
+from rssrob.wechat import MP_LOGIN_URL, WeChatAuthError
+from rssrob.wechat_credential import DEFAULT_PATH as WECHAT_CRED_PATH
+from rssrob.wechat_credential import credential_from_login
+from rssrob.wechat_credential import load as load_credential
+from rssrob.wechat_credential import save as save_credential
 
 # Reads config.yaml when present, otherwise the bundled example; saves always go
 # to config.yaml. Set RSSROB_CONFIG to override both read and write.
@@ -81,7 +96,7 @@ _ITEM_CACHE: dict = {}         # url -> (full_title, description) cached across 
 PROXY_URL = os.environ.get("RSSROB_PROXY") or None
 
 # Per-feed email subscriber list (gitignored; the notify job sends to these).
-SUBS = Subscribers(str(REPO_ROOT / "subscribers.json"))
+SUBS = Subscribers(str(REPO_ROOT / "var" / "subscribers.json"))
 
 
 # Defaults for the selector playground (the IPP 通知公告 example).
@@ -208,12 +223,37 @@ def index():
         abort(404, description=f"no such site: {site_name}")
 
     fetcher = FallbackFetcher(FALLBACK_FILES, proxy=site.proxy)
+    # wechat/twitter feeds are fetched via their API clients, not an HTTP fetch.
+    wechat_client = _wechat_client() if site.type == "wechat" else None
+    twitter_client = _twitter_client() if site.type == "twitter" else None
     try:
-        items, feed_title, feed_desc = obtain_items(site, fetcher)
-    except Exception as e:
+        items, feed_title, feed_desc = obtain_items(
+            site, fetcher, wechat_client=wechat_client,
+            twitter_client=twitter_client)
+    except WeChatAuthError:
         return render_template(
             "error.html",
-            message=f"could not load {site.url}: {e}",
+            message="not logged in to mp.weixin.qq.com — open the "
+                    "“wechat 订阅号” page and paste your cookie + token first.",
+            sites=config.sites,
+            active=site.name,
+        ), 502
+    except TwitterAuthError:
+        return render_template(
+            "error.html",
+            message="not logged in to X — open the “twitter” page and "
+                    "paste your cookie first.",
+            sites=config.sites,
+            active=site.name,
+        ), 502
+    except Exception as e:
+        if site.type == "twitter":
+            src = f"@{site.username}"
+        else:
+            src = site.url or f"公众号 {site.account_name or site.account_id}"
+        return render_template(
+            "error.html",
+            message=f"could not load {src}: {e}",
             sites=config.sites,
             active=site.name,
         ), 502
@@ -229,7 +269,7 @@ def index():
         title, desc = enrich(it, article_fetcher, site.article)
         entries.append({"item": it, "title": title, "desc": desc})
 
-    subs = SUBS.list(site.name)
+    subs = SUBS.items(site.name)          # {email: hours}
     return render_template(
         "preview.html",
         site=site,
@@ -254,7 +294,8 @@ def subscribe():
     email = (request.form.get("email") or "").strip()
     if not site:
         abort(400, description="missing feed")
-    status = SUBS.add(site, email)
+    hours = request.form.get("hours") or 24
+    status = SUBS.add(site, email, hours)
     if status == "added":
         return redirect(url_for("index", site=site, subscribed=email, show_subs=1))
     msg = "already subscribed" if status == "exists" else "please enter a valid email address"
@@ -272,6 +313,15 @@ def unsubscribe():
     return redirect(url_for("index", site=site, show_subs=1))
 
 
+@app.route("/set-frequency", methods=["POST"])
+def set_frequency():
+    """Update an email's digest frequency (hours), email-level."""
+    email = (request.form.get("email") or "").strip()
+    hours = request.form.get("hours") or 24
+    SUBS.set_freq(email, hours)
+    return redirect(url_for("email_list", updated=email))
+
+
 @app.route("/subscribers")
 def email_list():
     """List every subscriber email and which feeds it's subscribed to."""
@@ -280,7 +330,24 @@ def email_list():
     except Exception:
         sites = []
     return render_template("subscribers.html", sites=sites, active=None,
-                           by_email=SUBS.by_email())
+                           by_email=SUBS.by_email(),
+                           updated=request.args.get("updated"),
+                           added=request.args.get("added"),
+                           add_error=request.args.get("add_error"))
+
+
+@app.route("/add-feed", methods=["POST"])
+def add_feed():
+    """Subscribe an email to a feed from the subscribers page."""
+    email = (request.form.get("email") or "").strip()
+    site = (request.form.get("site") or "").strip()
+    hours = request.form.get("hours") or 24
+    if not site:
+        return redirect(url_for("email_list", add_error="choose a feed to add"))
+    status = SUBS.add(site, email, hours)
+    if status == "invalid":
+        return redirect(url_for("email_list", add_error="enter a valid email address"))
+    return redirect(url_for("email_list", added=email))
 
 
 def _terms(s):
@@ -450,8 +517,8 @@ def save():
         else:
             # single-file mode: upsert into the one config file
             raw = _load_raw(path) or _load_raw(_config_path())
-            raw.setdefault("output_dir", "./feeds")
-            raw.setdefault("state_db", "./rssrob.db")
+            raw.setdefault("output_dir", "./var/feeds")
+            raw.setdefault("state_db", "./var/rssrob.db")
             raw.setdefault("http", {"host": "127.0.0.1", "port": 8080})
             sites = raw.setdefault("sites", [])
             for i, s in enumerate(sites):
@@ -473,6 +540,241 @@ def save():
     if regex:
         params["regex"] = "on"
     return redirect(url_for("playground", **params))
+
+
+# --- WeChat 订阅号 (公众号平台) ---------------------------------------------
+# One shared client across requests; rebuilt when the user logs in via
+# /wechat/login, then reused by search.
+_WECHAT_CLIENT = None
+
+
+def _wechat_client():
+    global _WECHAT_CLIENT
+    if _WECHAT_CLIENT is None:
+        _WECHAT_CLIENT = build_wechat_client()
+    return _WECHAT_CLIENT
+
+
+_TWITTER_CLIENT = None
+
+
+def _twitter_client():
+    global _TWITTER_CLIENT
+    if _TWITTER_CLIENT is None:
+        _TWITTER_CLIENT = build_twitter_client()
+    return _TWITTER_CLIENT
+
+
+def _qr_svg(payload):
+    """Render a payload as an inline SVG QR code string."""
+    import io
+
+    import qrcode
+    import qrcode.image.svg
+    img = qrcode.make(payload, image_factory=qrcode.image.svg.SvgImage)
+    buf = io.BytesIO()
+    img.save(buf)
+    return buf.getvalue().decode("utf-8")
+
+
+def _safe_sites():
+    try:
+        return load_config(_config_path()).sites
+    except Exception:
+        return []
+
+
+def _write_site(site):
+    """Persist one feed dict to the config (folder: one file; else upsert)."""
+    name = site["name"]
+    path = _save_path()
+    if os.path.isdir(path):
+        fname = re.sub(r"[^A-Za-z0-9._-]", "-", name) + ".yaml"
+        out = os.path.join(path, fname)
+        with open(out, "w", encoding="utf-8") as f:
+            yaml.safe_dump(site, f, allow_unicode=True, sort_keys=False)
+        return out
+    raw = _load_raw(path) or _load_raw(_config_path())
+    raw.setdefault("output_dir", "./var/feeds")
+    raw.setdefault("state_db", "./var/rssrob.db")
+    raw.setdefault("http", {"host": "127.0.0.1", "port": 8080})
+    sites = raw.setdefault("sites", [])
+    for i, s in enumerate(sites):
+        if s.get("name") == name:
+            sites[i] = site
+            break
+    else:
+        sites.append(site)
+    with open(path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(raw, f, allow_unicode=True, sort_keys=False)
+    return path
+
+
+@app.route("/wechat/login")
+def wechat_login():
+    """Show a QR to open the 公众号 backend, plus a cookie+token capture.
+
+    The working flow is: log in at mp.weixin.qq.com (your own 公众号), then paste
+    the session cookie and the token from the URL here."""
+    cred = load_credential(WECHAT_CRED_PATH)
+    return render_template(
+        "wechat_login.html", active=None, sites=_safe_sites(),
+        login_url=MP_LOGIN_URL, qr_svg=_qr_svg(MP_LOGIN_URL),
+        logged_in_token=(cred.token if cred else None),
+        pasted=request.args.get("pasted"), paste_error=request.args.get("paste_error"))
+
+
+@app.route("/wechat/paste", methods=["POST"])
+def wechat_paste():
+    """Save a 公众号 credential from a pasted cookie + token."""
+    global _WECHAT_CLIENT
+    cookie = (request.form.get("cookie") or "").strip()
+    token = (request.form.get("token") or "").strip()
+    try:
+        cred = credential_from_login(cookie, token, time.time())
+    except ValueError as e:
+        return redirect(url_for("wechat_login", paste_error=str(e)))
+    save_credential(WECHAT_CRED_PATH, cred)
+    _WECHAT_CLIENT = None        # rebuild the shared client with the new credential
+    return redirect(url_for("wechat_login", pasted=cred.token))
+
+
+@app.route("/wechat/search", methods=["POST"])
+def wechat_search():
+    name = (request.form.get("name") or "").strip()
+    if not name:
+        return jsonify({"accounts": []})
+    try:
+        accounts = _wechat_client().search_accounts(name)
+    except WeChatAuthError:
+        return jsonify({"error": "not logged in — log in above first"})
+    except Exception as e:
+        return jsonify({"error": str(e)})
+    return jsonify({"accounts": [{"id": a.id, "name": a.name, "avatar": a.avatar,
+                                  "desc": a.description} for a in accounts]})
+
+
+@app.route("/wechat/save", methods=["POST"])
+def wechat_save():
+    name = (request.form.get("name") or "").strip()
+    account_id = (request.form.get("account_id") or "").strip()
+    account_name = (request.form.get("account_name") or "").strip()
+    account_description = (request.form.get("account_description") or "").strip()
+    if not name or not account_id:
+        return jsonify({"error": "feed name and account_id are required"})
+    site = {"name": name, "type": "wechat", "account_id": account_id,
+            "account_name": account_name}
+    if account_description:                       # the 公众号's intro -> feed <description>
+        site["description"] = account_description
+    interval = request.form.get("interval")
+    if interval:
+        try:
+            site["interval"] = int(interval)
+        except ValueError:
+            pass
+    try:
+        path = _write_site(site)
+    except OSError as e:
+        return jsonify({"error": f"could not write config: {e}"})
+    return jsonify({"saved": name, "path": path})
+
+
+# --- Twitter / X ------------------------------------------------------------
+
+@app.route("/twitter/login")
+def twitter_login():
+    """Paste an x.com session cookie (auth_token + ct0) to read tweets."""
+    cred = load_twitter_credential(TWITTER_CRED_PATH)
+    return render_template(
+        "twitter_login.html", active=None, sites=_safe_sites(),
+        login_url=X_LOGIN_URL, logged_in=bool(cred),
+        pasted=request.args.get("pasted"),
+        paste_error=request.args.get("paste_error"))
+
+
+@app.route("/twitter/paste", methods=["POST"])
+def twitter_paste():
+    """Save an X credential from a pasted cookie (+ optional proxy)."""
+    global _TWITTER_CLIENT
+    cookie = (request.form.get("cookie") or "").strip()
+    proxy = (request.form.get("proxy") or "").strip()
+    try:
+        cred = credential_from_cookie(cookie, time.time(), proxy=proxy or None)
+    except ValueError as e:
+        return redirect(url_for("twitter_login", paste_error=str(e)))
+    save_twitter_credential(TWITTER_CRED_PATH, cred)
+    _TWITTER_CLIENT = None        # rebuild the shared client with the new credential
+    return redirect(url_for("twitter_login", pasted="1"))
+
+
+@app.route("/twitter/save", methods=["POST"])
+def twitter_save():
+    handle = (request.form.get("handle") or "").strip().lstrip("@")
+    name = (request.form.get("name") or "").strip()
+    if not handle or not name:
+        return jsonify({"error": "feed name and @handle are required"})
+    try:
+        account = _twitter_client().resolve_user(handle)
+    except TwitterAuthError:
+        return jsonify({"error": "not logged in — paste your cookie above first"})
+    except Exception as e:
+        return jsonify({"error": str(e)})
+    if not account.id:
+        return jsonify({"error": f"no such account: @{handle}"})
+    site = {"name": name, "type": "twitter", "username": account.handle,
+            "account_id": account.id, "account_name": account.name}
+    if account.description:
+        site["description"] = account.description
+    try:
+        path = _write_site(site)
+    except OSError as e:
+        return jsonify({"error": f"could not write config: {e}"})
+    return jsonify({"saved": name, "path": path})
+
+
+# --- Backup / restore -------------------------------------------------------
+# A backup bundles the active config + the whole var/ tree (SQLite item history,
+# generated feeds, subscribers, digest state, 公众号 credential) into one zip, so
+# the instance can be moved or rebuilt. Restore extracts it back into place.
+
+
+def _backup_sources():
+    """Paths (under REPO_ROOT) to include in a backup: active config + var/."""
+    sources = []
+    cfg = Path(_config_path())
+    if cfg.name != "config.example.yaml" and cfg.exists():
+        sources.append(cfg)                       # configs/ dir or config.yaml
+    var_dir = REPO_ROOT / "var"
+    if var_dir.exists():
+        sources.append(var_dir)
+    return sources
+
+
+@app.route("/backup")
+def backup_page():
+    return render_template("backup.html", active=None, sites=_safe_sites(),
+                           restored=request.args.get("restored"),
+                           restore_error=request.args.get("restore_error"))
+
+
+@app.route("/backup/download")
+def backup_download():
+    data = build_backup(REPO_ROOT, _backup_sources())
+    fname = "rssrob-backup-" + time.strftime("%Y%m%d-%H%M%S") + ".zip"
+    return send_file(io.BytesIO(data), mimetype="application/zip",
+                     as_attachment=True, download_name=fname)
+
+
+@app.route("/backup/restore", methods=["POST"])
+def backup_restore():
+    f = request.files.get("backup")
+    if not f or not f.filename:
+        return redirect(url_for("backup_page", restore_error="choose a backup .zip file"))
+    try:
+        names = restore_backup(REPO_ROOT, f.read())
+    except ValueError as e:
+        return redirect(url_for("backup_page", restore_error=str(e)))
+    return redirect(url_for("backup_page", restored=len(names)))
 
 
 def resolve_proxy(proxy, proxy_port, proxy_host="127.0.0.1", proxy_scheme="http"):
