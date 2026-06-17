@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}About · RSSRob{% endblock %}
+{% block content %}
+  <div class="eyebrow">about</div>
+  <h1>RSSRob <span class="badge testing">● testing</span></h1>
+  <p class="lede">A self-hosted feed engine — it turns websites, WeChat 公众号,
+    and X accounts that publish no RSS into clean, deduplicated feeds, on a
+    schedule.</p>
+
+  <dl class="spec">
+    <div><dt>developer</dt><dd>Chenguang Wan</dd></div>
+    <div><dt>status</dt><dd>in testing — a pilot for <strong>research notifications</strong></dd></div>
+    <div><dt>sources</dt><dd><code>html</code> · <code>rss</code> ·
+      <code>wechat</code> · <code>twitter</code></dd></div>
+    <div><dt>pipeline</dt><dd>extract → store (SQLite) → serve</dd></div>
+  </dl>
+
+  <p class="note">Right now this instance runs as a test bed for research notifications —
+    tracking the feeds that matter to ongoing work. Things may change or break
+    while it's being tuned.</p>
+
+  <style>
+    .lede { font-size: 1.05rem; color: var(--fg); max-width: 60ch;
+            margin: .2rem 0 1.4rem; }
+    .badge.testing { background: #FBEFCE; color: #7E5C00; vertical-align: middle; }
+    .spec { margin: 0 0 1.4rem; border: 1px solid var(--line);
+            border-radius: var(--radius); background: var(--card);
+            box-shadow: var(--shadow); overflow: hidden; max-width: 540px; }
+    .spec > div { display: grid; grid-template-columns: 8.5rem 1fr;
+                  gap: 1rem; padding: .7rem 1rem; border-bottom: 1px solid var(--line); }
+    .spec > div:last-child { border-bottom: 0; }
+    .spec dt { font: 600 .66rem/1.6 var(--mono); letter-spacing: .14em;
+               text-transform: uppercase; color: var(--muted); }
+    .spec dd { margin: 0; color: var(--fg); }
+    .spec code { font-size: .8em; }
+    .note { color: var(--muted); font-size: .9rem; max-width: 60ch;
+            border-left: 3px solid var(--signal); padding-left: .8rem; }
+  </style>
+{% endblock %}
