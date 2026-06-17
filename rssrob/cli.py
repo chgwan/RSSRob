@@ -20,6 +20,8 @@ from .twitter_credential import save as save_twitter_credential
 from .wechat import MP_LOGIN_URL, WeChatAuthError
 from .wechat_credential import DEFAULT_PATH as WECHAT_CRED_PATH
 from .wechat_credential import credential_from_login, save as save_credential
+from . import admin_credential
+from .admin_credential import DEFAULT_PATH as ADMIN_CRED_PATH
 
 
 def main(argv=None) -> int:
@@ -52,6 +54,11 @@ def main(argv=None) -> int:
     p_tw_add.add_argument("handle", help="the @handle to follow (no @)")
     p_tw_add.add_argument("--save", metavar="FEED_NAME",
                           help="save it as a twitter feed with this name")
+    p_admin = sub.add_parser("set-admin-password")
+    p_admin.add_argument("--username", metavar="USER",
+                         help="admin username (default: admin)")
+    p_admin.add_argument("--password", metavar="PASS",
+                         help="admin password (omit to be prompted)")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO,
@@ -67,6 +74,8 @@ def main(argv=None) -> int:
         return _twitter_login(args)
     if args.command == "twitter-add":
         return _twitter_add(args)
+    if args.command == "set-admin-password":
+        return _set_admin_password(args)
 
     try:
         config = load_config(args.config)
@@ -265,6 +274,38 @@ def _twitter_add(args) -> int:
         return 0
     path = _write_twitter_feed(args.config, args.save, account)
     print(f"saved feed {args.save!r} → {path}")
+    return 0
+
+
+def _set_admin_password(args) -> int:
+    """Set or change the admin login for the management web UI."""
+    username = args.username
+    if username is None:
+        try:
+            username = input("Admin username [admin]: ").strip() or "admin"
+        except (EOFError, OSError):
+            username = "admin"
+    password = args.password
+    if password is None:
+        import getpass
+        try:
+            password = getpass.getpass("Admin password: ")
+            confirm = getpass.getpass("Confirm password: ")
+        except (EOFError, OSError):
+            print("no password provided; nothing saved", file=sys.stderr)
+            return 2
+        if password != confirm:
+            print("passwords do not match; nothing saved", file=sys.stderr)
+            return 2
+    if not password:
+        print("password must not be empty; nothing saved", file=sys.stderr)
+        return 2
+    existing = admin_credential.load(ADMIN_CRED_PATH)
+    secret_key = existing.secret_key if existing else None
+    cred = admin_credential.create(username, password, time.time(),
+                                   secret_key=secret_key)
+    admin_credential.save(ADMIN_CRED_PATH, cred)
+    print(f"saved admin credential for {cred.username!r} to {ADMIN_CRED_PATH}")
     return 0
 
 
