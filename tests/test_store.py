@@ -38,3 +38,34 @@ def test_max_items_window(tmp_path):
     s = _store(tmp_path)
     s.insert_new("f", [Item(id=str(i), title=str(i)) for i in range(5)], now=1.0)
     assert len(s.recent("f", 3)) == 3
+
+
+def test_prune_old_deletes_items_past_cutoff(tmp_path):
+    s = _store(tmp_path)
+    # published far in the past (2020) vs recent (2026)
+    s.insert_new("f", [
+        Item(id="old", title="old", date="Wed, 01 Jan 2020 00:00:00 GMT"),
+        Item(id="new", title="new", date="Mon, 15 Jun 2026 10:00:00 GMT"),
+    ], now=1_700_000_000.0)
+    now = 1_750_000_000.0           # ~2025-06
+    deleted = s.prune_old("f", max_age_seconds=365 * 86400, now=now)
+    assert deleted == 1
+    assert [r.id for r in s.recent("f", 10)] == ["new"]
+
+
+def test_prune_old_uses_first_seen_when_undated(tmp_path):
+    s = _store(tmp_path)
+    s.insert_new("f", [Item(id="x", title="x", date=None)], now=1000.0)
+    # cutoff far after first_seen → pruned; long before → kept
+    assert s.prune_old("f", max_age_seconds=10.0, now=1_000_000.0) == 1
+    s.insert_new("f", [Item(id="y", title="y", date=None)], now=2000.0)
+    assert s.prune_old("f", max_age_seconds=10_000.0, now=2001.0) == 0
+
+
+def test_prune_old_is_scoped_to_one_feed(tmp_path):
+    s = _store(tmp_path)
+    s.insert_new("a", [Item(id="1", title="t", date="Wed, 01 Jan 2020 00:00:00 GMT")], now=1.0)
+    s.insert_new("b", [Item(id="1", title="t", date="Wed, 01 Jan 2020 00:00:00 GMT")], now=1.0)
+    s.prune_old("a", max_age_seconds=365 * 86400, now=1_750_000_000.0)
+    assert len(s.recent("a", 10)) == 0
+    assert len(s.recent("b", 10)) == 1
