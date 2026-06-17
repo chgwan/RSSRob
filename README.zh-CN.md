@@ -146,6 +146,7 @@ configs/
 | `defaults.max_items` | `50` | 每个订阅源保留的最大条目数（滚动窗口）。 |
 | `defaults.timeout` | `20` | HTTP 抓取超时秒数。 |
 | `defaults.user_agent` | `RSSRob/0.1` | 抓取页面时发送的 User-Agent。 |
+| `defaults.max_age_days` | `365` | 从存储中删除早于该天数的条目（每订阅源，可覆盖）。`0`/null 表示保留全部。 |
 
 ### 单站点选项
 
@@ -162,6 +163,8 @@ configs/
 | `max_items` | 否 | 覆盖本站点的 `defaults.max_items`。 |
 | `proxy` | 否 | `html`/`rss` 抓取的每订阅源代理（`rssrob serve` 与 Web 预览都会生效）；接受 `socks5://ip:port`、`http(s)://ip:port` 或裸端口。（`twitter` 改用全局代理——见下文。） |
 | `article` | 否 | "深入"抓取的选择器（`title`/`content`）：跟进每个条目链接以取全标题 + 正文。 |
+| `filter` | 否 | 关键词/正则的包含–排除。一个映射，含 `include`/`exclude`（YAML 列表或逗号分隔字符串）、可选 `field`（默认 `title`）、可选 `regex: true`。被排除的条目不会写入存储。 |
+| `max_age_days` | 否 | 覆盖本订阅源的 `defaults.max_age_days`。`0` 表示保留全部历史。 |
 
 #### `rss` 数据源示例
 
@@ -243,6 +246,35 @@ sites:
 - 写出的 `.xml` 是该订阅源最近 `max_items` 条，按日期排序（无日期时按 `first_seen`）。
 
 结果：即使条目已从源页面滚走，仍会持续出现在你的订阅源中，且永不重复。
+
+---
+
+## 过滤与时效
+
+两个可选开关用于裁剪每个订阅源保留的内容。
+
+**关键词 / 正则过滤** —— 添加 `filter:` 块以丢弃你不想要的条目。被排除的条目会在
+*写入存储之前*丢弃，因此它们绝不会进入订阅源或邮件摘要：
+
+```yaml
+name: example
+type: rss
+url: https://example.com/feed.xml
+filter:
+  include: [python, rust]     # 仅保留匹配其一的条目（省略则全部保留）
+  exclude: [sponsored, ad]    # 丢弃匹配任一的条目
+  field: title                # 要测试的条目字段（默认：title）
+  regex: false                # true = 将词条按正则处理（re.search，忽略大小写）
+```
+
+词条可以是 YAML 列表或逗号分隔字符串。`regex: false`（默认）时词条按忽略大小写的
+子串匹配；`regex: true` 时每个词条是正则表达式（非法模式会被跳过，不会报错）。
+`/playground` 页面会替你写入该块。
+
+**时效** —— RSSRob 在每个周期中按发布日期（缺失时回退到 `first_seen`）从存储中删除
+早于 `max_age_days`（默认 **365**，即一年）的条目。可用每订阅源的 `max_age_days`
+覆盖，或用 `defaults.max_age_days` 全局设置；`0`（或 null）表示保留全部。
+条目按其发布日期计龄，因此若数据源回填了带有较早日期的条目，这些条目会在首次被发现时即被删除，而不会保留一年。
 
 ---
 
