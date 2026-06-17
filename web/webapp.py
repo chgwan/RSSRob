@@ -39,6 +39,7 @@ from flask import (Flask, abort, jsonify, redirect, render_template, request,
 from rssrob.article import fetch_article
 from rssrob.backup import build_backup, restore_backup
 from rssrob.config import ConfigError, load_config, normalize_proxy
+from rssrob.filters import apply_filter, parse_terms
 from rssrob.extract import extract_items
 from rssrob.pipeline import obtain_items
 from rssrob.rss import parse_feed
@@ -350,41 +351,6 @@ def add_feed():
     return redirect(url_for("email_list", added=email))
 
 
-def _terms(s):
-    """Split a comma/newline separated list into trimmed, non-empty terms."""
-    return [t.strip() for t in re.split(r"[,\n]", s or "") if t.strip()]
-
-
-def _matches_any(value, terms, regex):
-    if regex:
-        for p in terms:
-            try:
-                if re.search(p, value, re.I):
-                    return True
-            except re.error:
-                continue
-        return False
-    low = value.lower()
-    return any(t.lower() in low for t in terms)
-
-
-def apply_filter(items, include, exclude, field, regex):
-    """Tag each item kept/dropped by include/exclude terms on a chosen field.
-
-    Keep rule: passes include (or none given) AND matches no exclude term."""
-    inc, exc = _terms(include), _terms(exclude)
-    results = []
-    for it in items:
-        value = getattr(it, field, None) or ""
-        kept, reason = True, "kept"
-        if inc and not _matches_any(value, inc, regex):
-            kept, reason = False, "no include match"
-        elif exc and _matches_any(value, exc, regex):
-            kept, reason = False, "excluded"
-        results.append({"item": it, "kept": kept, "reason": reason})
-    return results
-
-
 @app.route("/playground")
 def playground():
     # Optional: load configured sites (for nav + ?site= prefill).
@@ -496,10 +462,10 @@ def save():
         site["proxy"] = proxy
 
     flt = {}
-    if _terms(include):
-        flt["include"] = _terms(include)
-    if _terms(exclude):
-        flt["exclude"] = _terms(exclude)
+    if parse_terms(include):
+        flt["include"] = parse_terms(include)
+    if parse_terms(exclude):
+        flt["exclude"] = parse_terms(exclude)
     if field and field != "title":
         flt["field"] = field
     if regex:
@@ -763,7 +729,7 @@ def delete_feeds():
     """Remove several feeds at once. Names come from repeated ``name`` fields
     and/or a comma/newline-separated ``names`` field. Returns which were deleted
     and which weren't found."""
-    names = request.form.getlist("name") + _terms(request.form.get("names", ""))
+    names = request.form.getlist("name") + parse_terms(request.form.get("names", ""))
     names = list(dict.fromkeys(n.strip() for n in names if n.strip()))  # de-dup, ordered
     if not names:
         return jsonify({"error": "no feed names given"}), 400
