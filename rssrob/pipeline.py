@@ -43,6 +43,8 @@ def run_cycle(site: Site, store: Store, fetcher, output_dir: str,
         now = time.time()
     items, feed_title, feed_desc = obtain_items(
         site, fetcher, wechat_client=wechat_client, twitter_client=twitter_client)
+    if site.filter:
+        items = [it for it in items if site.filter.keeps(it)]
     inserted = store.insert_new(site.name, items, now)
 
     effective = site

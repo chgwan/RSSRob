@@ -5,7 +5,8 @@ from typing import Dict, List, Optional
 
 import yaml
 
-from . import extract
+from . import extract, filters
+from .filters import FeedFilter
 
 
 class ConfigError(Exception):
@@ -57,6 +58,7 @@ class Site:
     user_agent: str = "RSSRob/0.1"
     proxy: Optional[str] = None      # per-feed proxy URL (or bare port)
     article: Dict[str, str] = field(default_factory=dict)  # follow-link selectors
+    filter: Optional[FeedFilter] = None    # keyword/regex include-exclude
 
 
 @dataclass
@@ -189,4 +191,5 @@ def _build_site(raw: dict, defaults: dict) -> Site:
         user_agent=raw.get("user_agent", defaults.get("user_agent", "RSSRob/0.1")),
         proxy=normalize_proxy(raw.get("proxy", defaults.get("proxy"))),
         article=raw.get("article") or {},
+        filter=filters.build_filter(raw.get("filter")),
     )

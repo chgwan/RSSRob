@@ -180,3 +180,26 @@ def test_twitter_site_builds_with_username():
     site = cfg.sites[0]
     assert site.type == "twitter" and site.username == "elonmusk"
     assert site.title == "@elonmusk"
+
+
+def test_filter_parsed_onto_site(tmp_path):
+    cfg = load_config(_write(tmp_path,
+        "sites:\n"
+        "  - name: f\n"
+        "    type: rss\n"
+        "    url: http://a/\n"
+        "    filter:\n"
+        "      include: [python, rust]\n"
+        "      exclude: sponsored\n"
+        "      field: summary\n"
+        "      regex: true\n"))
+    flt = cfg.sites[0].filter
+    assert flt is not None
+    assert flt.include == ["python", "rust"] and flt.exclude == ["sponsored"]
+    assert flt.field_name == "summary" and flt.regex is True
+
+
+def test_no_filter_means_none(tmp_path):
+    cfg = load_config(_write(tmp_path,
+        "sites:\n  - {name: f, type: rss, url: 'http://a/'}\n"))
+    assert cfg.sites[0].filter is None
