@@ -9,7 +9,22 @@
     {% elif source == "saved" %}
       <span class="badge saved">● saved copy</span>
     {% endif %}
+    <button id="delete-feed-btn" title="Remove this feed"
+            style="float:right; font-size:.78rem; color:#cf222e; background:none;
+                   border:1px solid #f0c8c8; border-radius:6px; padding:.2rem .55rem;
+                   cursor:pointer;">🗑 delete feed</button>
   </h1>
+  <script>
+    document.getElementById("delete-feed-btn").addEventListener("click", async () => {
+      if (!confirm("Remove the feed “{{ site.name }}”? This deletes its config, "
+                   + "generated XML and subscribers (item history is kept).")) return;
+      const fd = new FormData(); fd.append("name", "{{ site.name }}");
+      const r = await fetch("{{ url_for('delete_feed') }}", { method: "POST", body: fd });
+      const d = await r.json();
+      if (d.deleted) { window.location.href = "{{ url_for('index') }}"; }
+      else { alert("Could not delete: " + (d.error || r.status)); }
+    });
+  </script>
 
   {% if source == "saved" %}
     <div class="notice">
