@@ -162,3 +162,29 @@ def test_twitter_login_rejects_cookie_without_tokens(tmp_path, monkeypatch):
     monkeypatch.setattr("rssrob.cli.TWITTER_CRED_PATH", str(tmp_path / "tw.json"))
     rc = cli.main(["twitter-login", "--cookie", "lang=en"])
     assert rc == 2
+
+
+def test_set_admin_password_writes_credential(tmp_path, monkeypatch):
+    from rssrob import cli
+    from rssrob import admin_credential
+    cred_path = str(tmp_path / "admin.json")
+    monkeypatch.setattr(cli, "ADMIN_CRED_PATH", cred_path)
+    rc = cli.main(["set-admin-password", "--username", "admin",
+                   "--password", "s3cret"])
+    assert rc == 0
+    cred = admin_credential.load(cred_path)
+    assert cred is not None
+    assert admin_credential.verify(cred, "admin", "s3cret") is True
+
+
+def test_set_admin_password_preserves_secret_key(tmp_path, monkeypatch):
+    from rssrob import cli
+    from rssrob import admin_credential
+    cred_path = str(tmp_path / "admin.json")
+    monkeypatch.setattr(cli, "ADMIN_CRED_PATH", cred_path)
+    cli.main(["set-admin-password", "--username", "admin", "--password", "one"])
+    first = admin_credential.load(cred_path).secret_key
+    cli.main(["set-admin-password", "--username", "admin", "--password", "two"])
+    second = admin_credential.load(cred_path)
+    assert second.secret_key == first                  # key preserved
+    assert admin_credential.verify(second, "admin", "two") is True
