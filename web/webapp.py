@@ -707,6 +707,29 @@ def twitter_paste():
     return redirect(url_for("twitter_login", pasted="1"))
 
 
+@app.route("/twitter/lookup", methods=["POST"])
+def twitter_lookup():
+    """Preview an account before saving: its bio + a few latest posts."""
+    handle = (request.form.get("handle") or "").strip().lstrip("@")
+    if not handle:
+        return jsonify({"error": "enter a @handle"})
+    try:
+        client = _twitter_client()
+        account = client.resolve_user(handle)
+        if not account.id:
+            return jsonify({"error": f"no such account: @{handle}"})
+        tweets = [{"text": it.summary or it.title, "link": it.link, "date": it.date}
+                  for it in client.to_items(client.list_tweets(account.id, 3))]
+    except TwitterAuthError:
+        return jsonify({"error": "not logged in — paste your cookie above first"})
+    except Exception as e:
+        return jsonify({"error": str(e)})
+    return jsonify({"account": {"id": account.id, "name": account.name,
+                                "handle": account.handle,
+                                "description": account.description},
+                    "tweets": tweets})
+
+
 @app.route("/twitter/save", methods=["POST"])
 def twitter_save():
     handle = (request.form.get("handle") or "").strip().lstrip("@")

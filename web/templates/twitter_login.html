@@ -52,23 +52,68 @@
 <form id="add-form" onsubmit="return false;">
   <input id="handle" type="text" placeholder="@handle, e.g. elonmusk"
          style="padding:.45rem .6rem; border:1px solid var(--line); border-radius:6px;">
-  feed name:
-  <input id="feed" type="text" placeholder="feed-id"
-         style="padding:.45rem .6rem; border:1px solid var(--line); border-radius:6px;">
-  <button id="add-btn" style="padding:.45rem .9rem;">Save as feed</button>
-  <span id="add-note" class="count"></span>
+  <button id="lookup-btn" style="padding:.45rem .9rem;">Look up</button>
+  <span id="lookup-note" class="count"></span>
 </form>
 
+<div id="preview" style="margin-top:1rem;"></div>
+
 <script>
-document.getElementById("add-btn").addEventListener("click", async () => {
-  const handle = document.getElementById("handle").value.trim();
-  const feed = document.getElementById("feed").value.trim();
-  const note = document.getElementById("add-note");
-  if (!handle || !feed) { note.textContent = "enter a handle and a feed name"; return; }
-  const fd = new FormData(); fd.append("handle", handle); fd.append("name", feed);
-  const r = await fetch("{{ url_for('twitter_save') }}", { method: "POST", body: fd });
+const TW_LOOKUP = "{{ url_for('twitter_lookup') }}";
+const TW_SAVE = "{{ url_for('twitter_save') }}";
+
+function esc(s) {
+  const d = document.createElement("div"); d.textContent = s == null ? "" : s;
+  return d.innerHTML;
+}
+
+document.getElementById("lookup-btn").addEventListener("click", async () => {
+  const handle = document.getElementById("handle").value.trim().replace(/^@/, "");
+  const note = document.getElementById("lookup-note");
+  const box = document.getElementById("preview");
+  if (!handle) { note.textContent = "enter a @handle"; return; }
+  note.textContent = "looking up…"; box.innerHTML = "";
+  const fd = new FormData(); fd.append("handle", handle);
+  const r = await fetch(TW_LOOKUP, { method: "POST", body: fd });
   const d = await r.json();
-  note.textContent = d.error ? ("⚠️ " + d.error) : ("✅ saved → " + d.path);
+  note.textContent = "";
+  if (d.error) { box.innerHTML = "<div class='notice'>⚠️ " + esc(d.error) + "</div>"; return; }
+
+  const a = d.account;
+  let posts = "";
+  if (d.tweets && d.tweets.length) {
+    posts = "<div class='count' style='margin:.6rem 0 .2rem;'>Latest posts:</div><ul style='margin:.2rem 0; padding-left:1.1rem; line-height:1.6;'>";
+    for (const t of d.tweets) {
+      const when = t.date ? ("<span class='count'> · " + esc(t.date.slice(0, 16).replace('T', ' ')) + "</span>") : "";
+      const text = esc((t.text || "").slice(0, 140));
+      posts += "<li><a href='" + esc(t.link) + "' target='_blank'>" + text + "</a>" + when + "</li>";
+    }
+    posts += "</ul>";
+  } else {
+    posts = "<div class='count' style='margin-top:.5rem;'>No recent posts found.</div>";
+  }
+
+  box.innerHTML =
+    "<div class='meta'>" +
+      "<div><b>" + esc(a.name || ("@" + a.handle)) + "</b> " +
+        "<span class='count'>@" + esc(a.handle) + " · id " + esc(a.id) + "</span></div>" +
+      (a.description ? "<div style='margin-top:.25rem;'>" + esc(a.description) + "</div>" : "") +
+      posts +
+      "<div style='margin-top:.7rem;'>feed name: " +
+        "<input class='fn' value='" + esc(a.handle) + "' style='padding:.3rem;border:1px solid var(--line);border-radius:5px;'> " +
+        "<button class='save' style='padding:.35rem .8rem;'>Save as feed</button> " +
+        "<span class='saved count'></span></div>" +
+    "</div>";
+
+  box.querySelector(".save").addEventListener("click", async () => {
+    const feed = box.querySelector(".fn").value.trim();
+    const saved = box.querySelector(".saved");
+    if (!feed) { saved.textContent = "enter a feed name"; return; }
+    const sf = new FormData(); sf.append("handle", a.handle); sf.append("name", feed);
+    const sr = await fetch(TW_SAVE, { method: "POST", body: sf });
+    const sd = await sr.json();
+    saved.textContent = sd.error ? ("⚠️ " + sd.error) : ("✅ saved → " + sd.path);
+  });
 });
 </script>
 {% endblock %}
