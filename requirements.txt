@@ -4,3 +4,4 @@ cssselect
 feedgen
 pyyaml
 feedparser
+qrcode

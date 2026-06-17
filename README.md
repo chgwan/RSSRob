@@ -10,7 +10,7 @@ For sites without a feed, you point RSSRob at a page and tell it (with CSS selec
 
 ## Features
 
-- **Two source types** — `html` sites are scraped with **CSS selectors or XPath**; `rss` sites already publish a feed, so RSSRob just parses and re-serves it (no selectors needed).
+- **Four source types** — `html` sites are scraped with **CSS selectors or XPath**; `rss` sites already publish a feed, so RSSRob just parses and re-serves it (no selectors needed); `wechat` follows a 公众号 via your own backend; `twitter` follows an X account via your own logged-in session.
 - **Built-in scheduler** — one process scrapes each site on its own interval; no external cron needed.
 - **Built-in HTTP server** — serves each feed at a stable URL plus a simple index page.
 - **Dedup + history** — a SQLite store tracks every item ever seen. Items are added once (deduped by id), and your feed keeps a rolling window of the most recent N — so history survives even after items scroll off the source page.
@@ -75,8 +75,8 @@ pip install -r requirements.txt
 1. Create a `config.yaml` (see [Configuration](#configuration)):
 
    ```yaml
-   output_dir: ./feeds
-   state_db: ./rssrob.db
+   output_dir: ./var/feeds
+   state_db: ./var/rssrob.db
    http:
      host: 127.0.0.1
      port: 8080
@@ -144,8 +144,8 @@ exists, else `config.yaml`, else `config.example.yaml`. Override with
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `output_dir` | `./feeds` | Where generated `<name>.xml` files are written and served from. |
-| `state_db` | `./rssrob.db` | SQLite file holding item history / dedup state. |
+| `output_dir` | `./var/feeds` | Where generated `<name>.xml` files are written and served from. |
+| `state_db` | `./var/rssrob.db` | SQLite file holding item history / dedup state. |
 | `http.host` | `127.0.0.1` | Host the server binds to. Use `0.0.0.0` to expose on your network. |
 | `http.port` | `8080` | Port for the HTTP server. |
 | `defaults.interval` | `3600` | Seconds between scrapes (per site, overridable). |
@@ -159,14 +159,14 @@ exists, else `config.yaml`, else `config.example.yaml`. Override with
 |-----|----------|-------------|
 | `name` | yes | Unique id; used as the feed filename (`<name>.xml`) and CLI argument. |
 | `url` | yes | Page to scrape (`html`) or feed URL to parse (`rss`). |
-| `type` | no | `html` (default) or `rss`. Selects the source handling. |
+| `type` | no | `html` (default), `rss`, `wechat`, or `twitter`. Selects the source handling. |
 | `title` | html: yes / rss: no | RSS feed `<title>`. For `rss`, defaults to the source feed's title. |
 | `description` | no | RSS feed `<description>`. Defaults to the title (or the source feed's description for `rss`). |
 | `item` | html only | Selector matching each item/row on the page. Required for `html`; ignored for `rss`. |
 | `fields` | html only | Map of field name → selector (see below). Required for `html`; ignored for `rss`. |
 | `interval` | no | Overrides `defaults.interval` for this site. |
 | `max_items` | no | Overrides `defaults.max_items` for this site. |
-| `proxy` | no | Per-feed proxy; accepts `socks5://ip:port` or `http(s)://ip:port`. |
+| `proxy` | no | Per-feed proxy for `html`/`rss` fetches (honored by both `rssrob serve` and the web preview); accepts `socks5://ip:port`, `http(s)://ip:port`, or a bare port. (`twitter` uses the global proxy instead — see below.) |
 | `article` | no | "Go deeper" selectors (`title`/`content`): follow each item's link for the full title + body. |
 
 #### `rss` source example
@@ -302,7 +302,14 @@ RSSRob/
 │   └── request_url.py        # download a page's HTML to a file
 ├── samples/                  # saved pages for offline testing (ipp_page.html, …)
 ├── tests/                    # pytest suite + fixtures + conftest.py
-└── docs/                     # specs and plans
+├── docs/                     # specs and plans
+└── var/                      # runtime state (gitignored) — created on first run
+    ├── feeds/                # generated <name>.xml, served by the HTTP server
+    ├── rssrob.db             # SQLite item history + dedup state
+    ├── subscribers.json      # per-feed email subscribers
+    ├── digest_state.json     # "already emailed" item ids (incremental digests)
+    ├── wechat_credential.json # 公众号 session cookie + token (personal secret)
+    └── twitter_credential.json # X session cookie (auth_token + ct0; personal secret)
 ```
 
 ---
@@ -328,12 +335,15 @@ python web/webapp.py --proxy-port 7890     # default proxy for feeds that need o
 
 - `/` — feed preview (full titles + descriptions, follows article links). Each feed has a **subscribe** form so readers can sign up for email updates.
 - `/playground` — live **selector & filter playground** for HTML *and* RSS sources; **Save** writes a tested site (selectors, `filter`, `proxy`) as one file per feed into `configs/` (or `config.yaml` in single-file mode).
+- `/wechat/login` — log in to your 公众号 backend and search/add 公众号 feeds.
+- `/twitter/login` — paste your x.com cookie and add X accounts as feeds.
+- `/backup` — **backup / restore**: download your config + all runtime state under `var/` (SQLite history, feeds, subscribers, digest state, 公众号 credential) as one `.zip`, and restore it on another instance or after a reinstall. The zip holds secrets — keep it private, and restart `rssrob serve` after restoring.
 
 ---
 
 ## Email notifications
 
-Readers subscribe to a feed via the **subscribe** form on its preview page; addresses are stored in `subscribers.json` (gitignored — never committed).
+Readers subscribe to a feed via the **subscribe** form on its preview page; addresses are stored in `var/subscribers.json` (gitignored — never committed).
 
 Sending uses SMTP, configured through **environment variables** so secrets stay out of git:
 
@@ -354,6 +364,172 @@ python -m rssrob.notify --to you@gmail.com --subject "RSSRob test" --body "hello
 ```
 
 `rssrob.notify` auto-loads `.env` for convenience (pass `--no-dotenv` to skip it); **real environment variables always take precedence**, so in production just export the `RSSROB_SMTP_*` vars and skip the file.
+
+---
+
+## WeChat 订阅号 (Official Accounts)
+
+WeChat Official Accounts (公众号) publish no public RSS and block scraping their
+article lists. RSSRob lists them through **your own registered 公众号 backend**
+(mp.weixin.qq.com): its editor APIs can search any account by name and list that
+account's published articles. You log in once, search for an account, and RSSRob
+polls it on a schedule like any other feed.
+
+> **Requires your own 公众号.** You log in to mp.weixin.qq.com with your *own*
+> registered Official Account; RSSRob only ever reads (it never posts). WeChat
+> rate-limits these APIs ("频率限制"), so poll gently. The platform calls are
+> isolated in `rssrob/wechat.py` (`MpPlatformTransport`).
+>
+> (微信读书 was evaluated first but its API doesn't expose 公众号 at all, which is
+> why this uses the 公众号平台 instead.)
+
+### 0. Register a 公众号 (if you don't have one)
+
+The account is just the "key" that unlocks the article-search API — you never have
+to publish from it.
+
+1. Go to <https://mp.weixin.qq.com/> → **立即注册** (Register).
+2. Choose **订阅号** (Subscription Account) — it's free. An individual (**个人**)
+   subject type works and needs only a Chinese ID + a bank-card / face verification.
+3. Finish email + identity verification and log in.
+
+### 1. Log in to mp.weixin.qq.com
+
+RSSRob captures the session **cookie + token** from a normal browser login:
+
+1. Open <https://mp.weixin.qq.com/> and log in to your own 公众号. (`rssrob
+   wechat-login` with no args, and the `/wechat/login` page, render a QR for this.)
+2. Copy the **token** from the address bar after login (`…&token=123456789`) — just
+   the number.
+3. Copy the **cookie** — the full `Cookie:` request header: DevTools (F12) →
+   **Network** → click any request to `mp.weixin.qq.com` → **Headers** → **Request
+   Headers** → copy the whole `Cookie` value. (Don't use `document.cookie` — the
+   login cookies are `HttpOnly` and won't appear there.)
+4. Save them. Easiest is the interactive prompt (no shell-quoting a long cookie):
+
+   ```bash
+   rssrob wechat-login        # prompts you to paste the token, then the cookie
+   ```
+
+   Or pass them as flags / use the web form:
+
+   ```bash
+   rssrob wechat-login --token 123456789 --cookie "<cookie string>"
+   ```
+
+   …or paste both into the **/wechat/login** page in the web app.
+
+The credential is saved to `var/wechat_credential.json` (gitignored — a personal
+secret). The session expires after a while; when it does, RSSRob logs a clear
+"re-login" message — just repeat the paste to refresh.
+
+### 2. Add a 公众号 as a feed
+
+Search by name and save a match:
+
+```bash
+rssrob wechat-search "某某公众号"               # list matches with their ids
+rssrob wechat-search "某某公众号" --save my-oa  # pick one; writes configs/my-oa.yaml
+```
+
+That writes a `type: wechat` feed config:
+
+```yaml
+name: my-oa
+type: wechat
+account_id: "MzAx...=="     # the account's fakeid (filled in by search)
+account_name: "某某公众号"   # default for the RSS <title>
+interval: 7200              # be polite — don't poll aggressively
+max_items: 50
+```
+
+Each item is the article's **title + publish time + summary**, linking out to the
+full article on `mp.weixin.qq.com`. The web app's `/wechat/login` page also has a
+search box that saves a feed for you.
+
+### Per-feed options (wechat)
+
+| Key | Required | Description |
+|-----|----------|-------------|
+| `type` | yes | Must be `wechat`. |
+| `account_id` | yes | The account's `fakeid`; written by `wechat-search`. |
+| `account_name` | no | Human label; defaults the RSS `<title>`. |
+| `interval` / `max_items` | no | As for other feeds. A longer `interval` (≥ 7200s) is recommended to avoid mp.weixin.qq.com rate-limiting. |
+
+`url`, `item`, and `fields` are **not** used for `wechat`. All wechat feeds share
+one platform client, so requests are serialized and spaced; on rate-limiting RSSRob
+backs off, and on an expired session it logs a clear "run `rssrob wechat-login`"
+message and keeps serving the last good feed.
+
+---
+
+## Twitter / X feeds
+
+X (Twitter) publishes no free public RSS and its accounts sit behind a JS app and
+login wall. RSSRob reads an account through **your own logged-in X session**: it
+calls the same internal web GraphQL API the x.com site uses, sending your session
+cookies — no paid API, and no headless browser.
+
+> **Uses your own X session.** You paste the cookie from a logged-in x.com; RSSRob
+> only ever reads (it never posts). This is technically against X's ToS and the
+> session cookie expires (just re-paste), so treat it as personal-use. The HTTP
+> layer is isolated in `rssrob/twitter.py` (`GraphQlTransport`). X also rotates its
+> GraphQL query-ids periodically; if calls start failing with a "query-id rotated"
+> error, update `GraphQlTransport.QUERY_IDS`.
+
+### 1. Capture your X cookie
+
+Log in at <https://x.com/>, then copy your **`Cookie:` request header**:
+
+DevTools (F12) → **Network** → click any request to `x.com` → **Headers** →
+**Request Headers** → copy the entire `Cookie` value. (Don't use
+`document.cookie` — the important `auth_token` cookie is `HttpOnly`.) RSSRob pulls
+out the two cookies it needs (`auth_token` and `ct0`).
+
+```bash
+rssrob twitter-login                                  # prompts you to paste the cookie
+rssrob twitter-login --cookie "<cookie>" --proxy 7890 # non-interactive; optional proxy
+```
+
+…or paste it into the **/twitter/login** page in the web app. The credential is
+saved to `var/twitter_credential.json` (gitignored — a personal secret).
+
+### 2. Add an account as a feed
+
+```bash
+rssrob twitter-add elonmusk                  # show the resolved account
+rssrob twitter-add elonmusk --save elon      # save it; writes configs/elon.yaml
+```
+
+That writes a `type: twitter` feed config:
+
+```yaml
+name: elon
+type: twitter
+username: elonmusk
+account_id: "44196397"     # resolved rest_id; skips a lookup each cycle
+account_name: "Elon Musk"  # default for the RSS <title>
+```
+
+The web app's `/twitter/login` page also has an "add account" form.
+
+### Per-feed options (twitter)
+
+| Key | Required | Description |
+|-----|----------|-------------|
+| `type` | yes | Must be `twitter`. |
+| `username` | yes | The `@handle` (no `@`). |
+| `account_id` | no | The numeric `rest_id`; written by `twitter-add` to skip the handle lookup. |
+| `interval` / `max_items` | no | As for other feeds. |
+
+`url`, `item`, and `fields` are **not** used for `twitter`. All twitter feeds share
+one client; the proxy is global (set `RSSROB_PROXY`, or `twitter-login --proxy`).
+On an expired session RSSRob logs "run `rssrob twitter-login`" and keeps serving
+the last good feed.
+
+> **Proxy note:** per-feed `proxy:` applies to `html`/`rss` feeds (now honored on
+> the `rssrob serve` path too, not just the web preview). Twitter uses the global
+> proxy above.
 
 ---
 

@@ -29,6 +29,7 @@
     <input type="hidden" name="site" value="{{ site.name }}">
     <span class="sub-label">📧 Get email updates for this feed:</span>
     <input type="email" name="email" placeholder="you@example.com" required>
+    <span class="freq">every <input type="number" name="hours" value="24" min="1" step="1"> hours</span>
     <button type="submit">Subscribe</button>
     {% if subscriber_count %}
       <a class="sub-count" href="{{ url_for('index', site=site.name, show_subs=1) }}">
@@ -44,9 +45,9 @@
       </div>
       {% if subscribers %}
         <ul>
-          {% for e in subscribers %}
+          {% for e, hours in subscribers.items() %}
             <li>
-              <span>{{ e }}</span>
+              <span>{{ e }} <span class="freq-tag">every {{ hours }}h</span></span>
               <form method="post" action="{{ url_for('unsubscribe') }}">
                 <input type="hidden" name="site" value="{{ site.name }}">
                 <input type="hidden" name="email" value="{{ e }}">
@@ -70,8 +71,13 @@
     form.subscribe .sub-label { font-size:.9rem; color:#1f2328; }
     form.subscribe input[type=email] { flex:1; min-width:200px; padding:.4rem .55rem;
       border:1px solid #d0d7de; border-radius:7px; font-size:.9rem; }
+    form.subscribe .freq { font-size:.85rem; color:#656d76; }
+    form.subscribe .freq input { width:3.4rem; padding:.35rem .4rem; border:1px solid #d0d7de;
+      border-radius:7px; font-size:.9rem; text-align:right; }
     form.subscribe button { background:#0353a4; color:#fff; border:0;
       padding:.45rem 1.1rem; border-radius:7px; font-size:.9rem; cursor:pointer; }
+    .sub-list .freq-tag { color:#656d76; font-size:.78rem; background:#eef1f4;
+      border-radius:999px; padding:.05rem .45rem; margin-left:.25rem; }
     a.sub-count { font-size:.8rem; color:#0353a4; text-decoration:none; white-space:nowrap; }
     a.sub-count:hover { text-decoration:underline; }
     .sub-list { background:#fff; border:1px solid #d0d7de; border-radius:10px;
@@ -90,17 +96,33 @@
   </style>
 
   <div class="meta">
-    <div>Source: <a href="{{ site.url }}" target="_blank">{{ site.url }}</a>
-      <span class="count">· type <code>{{ site.type }}</code></span></div>
-    {% if site.type == "html" %}
-      <div>Item selector: <code>{{ site.item }}</code></div>
-      <div>Fields:
-        {% for name, sel in site.fields.items() %}
-          {{ name }} <code>{{ sel }}</code>{% if not loop.last %} · {% endif %}
-        {% endfor %}
-      </div>
+    {% if site.type == "wechat" %}
+      <div>公众号: <strong>{{ site.account_name or site.account_id }}</strong>
+        <span class="count">· type <code>wechat</code> · fakeid
+          <code>{{ site.account_id }}</code></span></div>
+      {% if site.description %}
+        <div>{{ site.description }}</div>
+      {% endif %}
+      <div>Articles fetched via the 公众号平台 (mp.weixin.qq.com).</div>
+    {% elif site.type == "twitter" %}
+      <div>X account: <strong>@{{ site.username }}</strong>
+        <span class="count">· type <code>twitter</code>{% if site.account_id %} ·
+          id <code>{{ site.account_id }}</code>{% endif %}</span></div>
+      {% if site.description %}<div>{{ site.description }}</div>{% endif %}
+      <div>Tweets fetched via the X web API.</div>
     {% else %}
-      <div>Parsed as an existing RSS/Atom feed (no selectors needed).</div>
+      <div>Source: <a href="{{ site.url }}" target="_blank">{{ site.url }}</a>
+        <span class="count">· type <code>{{ site.type }}</code></span></div>
+      {% if site.type == "html" %}
+        <div>Item selector: <code>{{ site.item }}</code></div>
+        <div>Fields:
+          {% for name, sel in site.fields.items() %}
+            {{ name }} <code>{{ sel }}</code>{% if not loop.last %} · {% endif %}
+          {% endfor %}
+        </div>
+      {% else %}
+        <div>Parsed as an existing RSS/Atom feed (no selectors needed).</div>
+      {% endif %}
     {% endif %}
   </div>
 

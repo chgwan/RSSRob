@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Twitter / X · RSSRob{% endblock %}
+{% block content %}
+<h2 style="margin:.2rem 0 1rem">Twitter / X feeds</h2>
+
+{% if logged_in %}
+  <div class="meta" style="border-left:4px solid var(--green);">
+    ✅ A cookie is saved. Add an account below. Re-paste a fresh cookie any time
+    the session expires.
+  </div>
+{% endif %}
+{% if pasted %}
+  <div class="meta" style="border-left:4px solid var(--green);">✅ Saved credential.</div>
+{% endif %}
+{% if paste_error %}<div class="error">⚠️ {{ paste_error }}</div>{% endif %}
+
+<div class="notice">
+  <strong>RSSRob reads X with your own logged-in session.</strong> It calls the
+  same web API the x.com site uses, sending your <code>auth_token</code> +
+  <code>ct0</code> cookies. Nothing is posted; the cookie stays local
+  (<code>var/twitter_credential.json</code>, gitignored). It expires after a
+  while — just paste a fresh one.
+</div>
+
+<div style="max-width:640px;">
+  <p style="margin:.1rem 0 .5rem; font-weight:600;">After logging in to
+    <a href="{{ login_url }}" target="_blank">x.com</a>, grab your cookie:</p>
+  <ol style="padding-left:1.1rem; line-height:1.7;">
+    <li>DevTools (F12) → <b>Network</b> → click any request to
+      <code>x.com</code> → <b>Headers</b> → <b>Request Headers</b> → copy the
+      whole <code>Cookie</code> value.</li>
+    <li>⚠️ Don't use <code>document.cookie</code> — <code>auth_token</code> is
+      <code>HttpOnly</code> and won't appear there.</li>
+  </ol>
+  <form method="post" action="{{ url_for('twitter_paste') }}">
+    <label class="count">cookie (the full Cookie header)</label>
+    <textarea name="cookie" rows="3"
+      placeholder="auth_token=...; ct0=...; guest_id=...; ..."
+      style="width:100%; font:13px monospace; border:1px solid var(--line);
+      border-radius:6px; padding:.5rem;"></textarea>
+    <label class="count" style="display:block; margin-top:.4rem;">proxy (optional)</label>
+    <input name="proxy" placeholder="e.g. 7890 or socks5://127.0.0.1:1080"
+           style="width:100%; padding:.4rem; border:1px solid var(--line);
+           border-radius:6px; font:13px monospace;">
+    <button style="margin-top:.5rem; padding:.45rem .9rem;">Save credential</button>
+  </form>
+</div>
+
+<hr style="border:none; border-top:1px solid var(--line); margin:1.5rem 0;">
+
+<h3 style="margin:.2rem 0 .6rem">Add an account</h3>
+<form id="add-form" onsubmit="return false;">
+  <input id="handle" type="text" placeholder="@handle, e.g. elonmusk"
+         style="padding:.45rem .6rem; border:1px solid var(--line); border-radius:6px;">
+  feed name:
+  <input id="feed" type="text" placeholder="feed-id"
+         style="padding:.45rem .6rem; border:1px solid var(--line); border-radius:6px;">
+  <button id="add-btn" style="padding:.45rem .9rem;">Save as feed</button>
+  <span id="add-note" class="count"></span>
+</form>
+
+<script>
+document.getElementById("add-btn").addEventListener("click", async () => {
+  const handle = document.getElementById("handle").value.trim();
+  const feed = document.getElementById("feed").value.trim();
+  const note = document.getElementById("add-note");
+  if (!handle || !feed) { note.textContent = "enter a handle and a feed name"; return; }
+  const fd = new FormData(); fd.append("handle", handle); fd.append("name", feed);
+  const r = await fetch("{{ url_for('twitter_save') }}", { method: "POST", body: fd });
+  const d = await r.json();
+  note.textContent = d.error ? ("⚠️ " + d.error) : ("✅ saved → " + d.path);
+});
+</script>
+{% endblock %}

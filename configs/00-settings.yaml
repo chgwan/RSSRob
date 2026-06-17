@@ -10,10 +10,10 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Directory where generated feed XML is written and served from.
-output_dir: ./feeds
+output_dir: ./var/feeds
 
 # SQLite file holding item history + dedup state (the feed's backing store).
-state_db: ./rssrob.db
+state_db: ./var/rssrob.db
 
 # Built-in HTTP server that serves /feeds/<name>.xml and the index page.
 http:

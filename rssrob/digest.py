@@ -246,15 +246,15 @@ def main(argv=None) -> int:
     p.add_argument("--config", help="config file or dir (default: ./configs/ etc.)")
     p.add_argument("--to", action="append", metavar="EMAIL",
                    help="override recipients (repeatable); default = the feed's subscribers")
-    p.add_argument("--subscribers", default="subscribers.json",
-                   help="subscriber store path (default: subscribers.json)")
+    p.add_argument("--subscribers", default="var/subscribers.json",
+                   help="subscriber store path (default: var/subscribers.json)")
     p.add_argument("--limit", type=int, default=None,
                    help="max NEW items per incremental send (default: digest.limit or 10)")
     p.add_argument("--first-limit", type=int, default=None,
                    help="max items on the first send for a feed "
                         "(default: digest.first_limit or 20)")
-    p.add_argument("--state", default="digest_state.json",
-                   help="sent-state file for incremental sends (default: digest_state.json)")
+    p.add_argument("--state", default="var/digest_state.json",
+                   help="sent-state file for incremental sends (default: var/digest_state.json)")
     p.add_argument("--all", action="store_true",
                    help="ignore state and (re)send all current items")
     p.add_argument("--dry-run", action="store_true",

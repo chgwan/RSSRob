@@ -42,12 +42,15 @@ class HttpConfig:
 @dataclass
 class Site:
     name: str
-    url: str
+    url: Optional[str] = None
     type: str = "html"
     title: Optional[str] = None
     description: Optional[str] = None
     item: Optional[str] = None
     fields: Dict[str, str] = field(default_factory=dict)
+    account_id: Optional[str] = None       # wechat: 公众号 fakeid (required)
+    account_name: Optional[str] = None     # wechat: human label / default title
+    username: Optional[str] = None         # twitter: @handle (no leading @)
     interval: int = 3600
     max_items: int = 50
     timeout: int = 20
@@ -128,8 +131,8 @@ def _build_config(raw: dict) -> Config:
         sites.append(site)
 
     return Config(
-        output_dir=raw.get("output_dir", "./feeds"),
-        state_db=raw.get("state_db", "./rssrob.db"),
+        output_dir=raw.get("output_dir", "./var/feeds"),
+        state_db=raw.get("state_db", "./var/rssrob.db"),
         http=http,
         sites=sites,
         digest=raw.get("digest") or {},
@@ -140,12 +143,19 @@ def _build_site(raw: dict, defaults: dict) -> Site:
     if "name" not in raw:
         raise ConfigError("site missing required key: name")
     name = raw["name"]
-    if "url" not in raw:
-        raise ConfigError(f"site {name!r} missing required key: url")
 
     stype = raw.get("type", "html")
-    if stype not in ("html", "rss"):
+    if stype not in ("html", "rss", "wechat", "twitter"):
         raise ConfigError(f"site {name!r} has unknown type: {stype!r}")
+
+    if stype == "wechat":
+        if not raw.get("account_id"):
+            raise ConfigError(f"site {name!r} (wechat) missing required key: account_id")
+    elif stype == "twitter":
+        if not raw.get("username"):
+            raise ConfigError(f"site {name!r} (twitter) missing required key: username")
+    elif "url" not in raw:
+        raise ConfigError(f"site {name!r} missing required key: url")
 
     if stype == "html":
         if "item" not in raw:
@@ -161,12 +171,18 @@ def _build_site(raw: dict, defaults: dict) -> Site:
 
     return Site(
         name=name,
-        url=raw["url"],
+        url=raw.get("url"),
         type=stype,
-        title=raw.get("title"),
+        title=raw.get("title") or (
+            raw.get("account_name") if stype == "wechat"
+            else (f"@{raw['username']}" if stype == "twitter" and raw.get("username")
+                  else None)),
         description=raw.get("description"),
         item=raw.get("item"),
         fields=raw.get("fields") or {},
+        account_id=raw.get("account_id"),
+        account_name=raw.get("account_name"),
+        username=raw.get("username"),
         interval=raw.get("interval", defaults.get("interval", 3600)),
         max_items=raw.get("max_items", defaults.get("max_items", 50)),
         timeout=raw.get("timeout", defaults.get("timeout", 20)),
