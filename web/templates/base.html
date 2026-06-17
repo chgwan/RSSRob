@@ -243,6 +243,13 @@
           <span>About</span></a>
       </nav>
       <div class="rail-foot">
+        {% if admin_user %}
+        <div class="rail-account" style="margin-bottom:.5rem;">
+          <form method="post" action="{{ url_for('logout') }}" style="display:inline;">
+            <button type="submit" style="background:none;border:0;padding:0;font:inherit;color:var(--rail-muted);text-decoration:underline;cursor:pointer;">log out</button>
+          </form>
+        </div>
+        {% endif %}
         <div><span class="pulse" aria-hidden="true"></span><span class="on">engine online</span></div>
         <div>rssrob · pipeline</div>
       </div>
@@ -259,6 +266,15 @@
           </a>
         {% endfor %}
       </nav>
+      {% endif %}
+      {% if not admin_required %}
+      <div class="notice" style="margin:1rem 2rem 0;">
+        {% if admin_can_setup %}
+          ⚠ No admin password set — <a href="{{ url_for('setup') }}">set a password</a> to protect this console.
+        {% else %}
+          ⚠ No admin password set — run <code>rssrob set-admin-password</code> on the host (or open this page from localhost).
+        {% endif %}
+      </div>
       {% endif %}
       <div class="content">
         {% block content %}{% endblock %}

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}RSSRob{% endblock %}</title>
+  <style>
+    :root { --ink:#0F1F26; --signal:#FF6A1F; --canvas:#F1F5F4; --card:#fff;
+            --fg:#15252C; --muted:#5C6E74; --line:#DFE7E5;
+            --mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+            --sans:"Segoe UI",system-ui,-apple-system,Arial,sans-serif; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; display:grid; place-items:center;
+           background:var(--canvas); color:var(--fg); font:15px/1.6 var(--sans); }
+    .card { width:min(92vw,380px); background:var(--card);
+            border:1px solid var(--line); border-radius:14px; padding:1.6rem 1.5rem;
+            box-shadow:0 6px 24px -12px rgba(15,31,38,.22); }
+    .brand { font:700 1.3rem/1 var(--mono); color:var(--ink); margin:0 0 .2rem; }
+    .brand .cur { color:var(--signal); }
+    .sub { color:var(--muted); font-size:.85rem; margin:0 0 1.2rem; }
+    label { display:block; font:600 .7rem/1 var(--mono); letter-spacing:.1em;
+            text-transform:uppercase; color:var(--muted); margin:.9rem 0 .35rem; }
+    input { width:100%; font:inherit; color:var(--fg); background:var(--card);
+            border:1px solid var(--line); border-radius:8px; padding:.5rem .65rem; }
+    input:focus { outline:none; border-color:var(--signal);
+                  box-shadow:0 0 0 3px rgba(255,106,31,.15); }
+    button { width:100%; margin-top:1.2rem; font:600 .95rem var(--sans);
+             cursor:pointer; background:var(--ink); color:#fff; border:0;
+             border-radius:8px; padding:.6rem; }
+    .err { margin:.9rem 0 0; padding:.55rem .7rem; border-radius:8px;
+           background:#FCECEC; color:#8A1F22; font-size:.85rem;
+           border-left:3px solid #D63A3F; }
+  </style>
+</head>
+<body>
+  {% block card %}{% endblock %}
+</body>
+</html>

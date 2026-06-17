@@ -34,12 +34,13 @@ import lxml.html
 import requests
 import yaml
 from flask import (Flask, abort, jsonify, redirect, render_template, request,
-                   send_file, url_for)
+                   send_file, session, url_for)
 
 from rssrob.article import fetch_article
 from rssrob.backup import build_backup, restore_backup
 from rssrob.config import ConfigError, load_config, normalize_proxy
 from rssrob.extract import extract_items
+from rssrob import admin_credential
 from rssrob.pipeline import obtain_items
 from rssrob.rss import parse_feed
 from rssrob.scheduler import build_twitter_client, build_wechat_client
@@ -111,6 +112,112 @@ PLAYGROUND_DEFAULTS = {
 }
 
 app = Flask(__name__)
+
+# Admin login credential (gitignored, under var/). When present it gates the
+# whole UI; absent means "open mode" (today's behavior) with a setup banner.
+ADMIN_CRED_PATH = admin_credential.DEFAULT_PATH
+
+# Endpoints reachable without a session (the login/logout/first-run flow + static).
+_PUBLIC_ENDPOINTS = {"login", "logout", "setup", "static"}
+
+
+def _load_admin():
+    """The current admin credential (read fresh each call), or None in open mode."""
+    return admin_credential.load(ADMIN_CRED_PATH)
+
+
+def _is_loopback():
+    """True when the request comes from localhost (no X-Forwarded-For parsing)."""
+    return request.remote_addr in ("127.0.0.1", "::1")
+
+
+def _safe_next(target):
+    """Only allow same-site relative redirect targets."""
+    if target and target.startswith("/") and not target.startswith("//"):
+        return target
+    return None
+
+
+# Sign session cookies with the persisted key when a credential exists at boot;
+# otherwise an ephemeral key (no sessions are issued in open mode anyway).
+_boot_cred = _load_admin()
+app.secret_key = _boot_cred.secret_key if _boot_cred else os.urandom(32)
+
+
+@app.before_request
+def _require_login():
+    cred = _load_admin()
+    if cred is None:                                  # open mode: no auth
+        return None
+    if request.endpoint in _PUBLIC_ENDPOINTS:
+        return None
+    if session.get("user"):
+        return None
+    return redirect(url_for("login", next=request.path))
+
+
+@app.context_processor
+def _inject_admin():
+    cred = _load_admin()
+    return {
+        "admin_required": cred is not None,
+        "admin_user": session.get("user"),
+        "admin_can_setup": cred is None and _is_loopback(),
+    }
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    cred = _load_admin()
+    if cred is None:                                  # nothing to log into
+        return redirect(url_for("index"))
+    nxt = _safe_next(request.values.get("next"))
+    if session.get("user"):
+        return redirect(nxt or url_for("index"))
+    error = None
+    if request.method == "POST":
+        username = (request.form.get("username") or "").strip()
+        password = request.form.get("password") or ""
+        if admin_credential.verify(cred, username, password):
+            session["user"] = cred.username
+            session.permanent = True
+            return redirect(nxt or url_for("index"))
+        error = "incorrect username or password"      # same for bad user or pass
+    return render_template("login.html", error=error, next=nxt or "")
+
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
+@app.route("/setup", methods=["GET", "POST"])
+def setup():
+    if _load_admin() is not None:                     # first-run only
+        return redirect(url_for("login"))
+    if not _is_loopback():
+        return render_template(
+            "error.html",
+            message="set the admin password locally: run "
+                    "`rssrob set-admin-password` on the host, or open this "
+                    "page from localhost."), 403
+    error = None
+    if request.method == "POST":
+        username = (request.form.get("username") or "").strip() or "admin"
+        password = request.form.get("password") or ""
+        confirm = request.form.get("confirm") or ""
+        if not password:
+            error = "password must not be empty"
+        elif password != confirm:
+            error = "passwords do not match"
+        else:
+            cred = admin_credential.create(username, password, time.time())
+            admin_credential.save(ADMIN_CRED_PATH, cred)
+            session["user"] = cred.username
+            session.permanent = True
+            return redirect(url_for("index"))
+    return render_template("setup.html", error=error)
 
 
 def _strip_html(s):

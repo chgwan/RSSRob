@@ -1,0 +1,15 @@
+{% extends "_auth_base.html" %}
+{% block title %}Sign in · RSSRob{% endblock %}
+{% block card %}
+  <form class="card" method="post" action="{{ url_for('login') }}">
+    <h1 class="brand">rssrob<span class="cur">_</span></h1>
+    <p class="sub">Sign in to the feed console.</p>
+    <input type="hidden" name="next" value="{{ next }}">
+    <label for="u">Username</label>
+    <input id="u" name="username" autocomplete="username" autofocus>
+    <label for="p">Password</label>
+    <input id="p" name="password" type="password" autocomplete="current-password">
+    {% if error %}<div class="err">{{ error }}</div>{% endif %}
+    <button type="submit">Sign in</button>
+  </form>
+{% endblock %}

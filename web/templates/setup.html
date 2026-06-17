@@ -1,0 +1,16 @@
+{% extends "_auth_base.html" %}
+{% block title %}Set up · RSSRob{% endblock %}
+{% block card %}
+  <form class="card" method="post" action="{{ url_for('setup') }}">
+    <h1 class="brand">rssrob<span class="cur">_</span></h1>
+    <p class="sub">Set an admin username and password to protect this console.</p>
+    <label for="u">Username</label>
+    <input id="u" name="username" value="admin" autocomplete="username" autofocus>
+    <label for="p">Password</label>
+    <input id="p" name="password" type="password" autocomplete="new-password">
+    <label for="c">Confirm password</label>
+    <input id="c" name="confirm" type="password" autocomplete="new-password">
+    {% if error %}<div class="err">{{ error }}</div>{% endif %}
+    <button type="submit">Set password</button>
+  </form>
+{% endblock %}
