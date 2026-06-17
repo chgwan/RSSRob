@@ -65,7 +65,7 @@ def create(username: str, password: str, now: float,
     return AdminCredential(
         username=username,
         password_hash=hash_password(password),
-        secret_key=secret_key or secrets.token_hex(32),
+        secret_key=secret_key if secret_key is not None else secrets.token_hex(32),
         updated_at=now,
     )
 
@@ -88,7 +88,7 @@ def load(path: str = DEFAULT_PATH) -> Optional["AdminCredential"]:
             raw = json.load(f) or {}
     except (OSError, ValueError):
         return None
-    if not raw or "password_hash" not in raw:
+    if not raw or any(raw.get(k) is None for k in _FIELDS):
         return None
     return AdminCredential(**{k: raw.get(k) for k in _FIELDS})
 
