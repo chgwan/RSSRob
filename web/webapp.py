@@ -610,6 +610,68 @@ def _write_site(site):
     return path
 
 
+def _delete_site_files(save_path, name) -> bool:
+    """Remove feed ``name`` from the config (folder: drop it from / delete the
+    owning file; single file: drop it from ``sites``). Returns True if found.
+
+    The inverse of ``_write_site``: a single-site file (top-level ``name``) is
+    deleted outright; a ``sites:`` file has the entry removed (and the file
+    deleted if it then holds nothing but that one feed)."""
+    if os.path.isdir(save_path):
+        removed = False
+        files = list(Path(save_path).glob("*.yaml")) + list(Path(save_path).glob("*.yml"))
+        for fp in files:
+            raw = _load_raw(str(fp))
+            if not raw:
+                continue
+            if "sites" in raw:
+                sites = raw.get("sites") or []
+                kept = [s for s in sites if s.get("name") != name]
+                if len(kept) == len(sites):
+                    continue
+                removed = True
+                if kept or (set(raw) - {"sites"}):       # keep file for its globals
+                    raw["sites"] = kept
+                    with open(fp, "w", encoding="utf-8") as f:
+                        yaml.safe_dump(raw, f, allow_unicode=True, sort_keys=False)
+                else:
+                    fp.unlink()
+            elif raw.get("name") == name:                # single-site file
+                fp.unlink()
+                removed = True
+        return removed
+
+    raw = _load_raw(save_path)
+    sites = raw.get("sites") or []
+    kept = [s for s in sites if s.get("name") != name]
+    if len(kept) == len(sites):
+        return False
+    raw["sites"] = kept
+    with open(save_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(raw, f, allow_unicode=True, sort_keys=False)
+    return True
+
+
+def _delete_feed_artifacts(name) -> None:
+    """Best-effort cleanup after removing a feed: its generated XML + subscribers."""
+    try:
+        output_dir = load_config(_config_path()).output_dir
+    except Exception:
+        output_dir = "./var/feeds"
+    out = Path(output_dir)
+    if not out.is_absolute():
+        out = REPO_ROOT / out
+    try:
+        (out / f"{name}.xml").unlink()
+    except OSError:
+        pass
+    try:
+        for email in SUBS.list(name):
+            SUBS.remove(name, email)
+    except Exception:
+        pass
+
+
 @app.route("/wechat/login")
 def wechat_login():
     """Show a QR to open the 公众号 backend, plus a cookie+token capture.
@@ -677,6 +739,47 @@ def wechat_save():
     except OSError as e:
         return jsonify({"error": f"could not write config: {e}"})
     return jsonify({"saved": name, "path": path})
+
+
+@app.route("/delete-feed", methods=["POST"])
+def delete_feed():
+    """Remove a feed: drop it from the config and clean up its generated XML +
+    subscribers. (Item history in the SQLite store is left intact.)"""
+    name = (request.form.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "feed name required"}), 400
+    try:
+        removed = _delete_site_files(_save_path(), name)
+    except OSError as e:
+        return jsonify({"error": f"could not update config: {e}"}), 500
+    if not removed:
+        return jsonify({"error": f"no such feed: {name}"}), 404
+    _delete_feed_artifacts(name)
+    return jsonify({"deleted": name})
+
+
+@app.route("/delete-feeds", methods=["POST"])
+def delete_feeds():
+    """Remove several feeds at once. Names come from repeated ``name`` fields
+    and/or a comma/newline-separated ``names`` field. Returns which were deleted
+    and which weren't found."""
+    names = request.form.getlist("name") + _terms(request.form.get("names", ""))
+    names = list(dict.fromkeys(n.strip() for n in names if n.strip()))  # de-dup, ordered
+    if not names:
+        return jsonify({"error": "no feed names given"}), 400
+    deleted, not_found = [], []
+    for name in names:
+        try:
+            removed = _delete_site_files(_save_path(), name)
+        except OSError as e:
+            return jsonify({"error": f"could not update config: {e}",
+                            "deleted": deleted}), 500
+        if removed:
+            _delete_feed_artifacts(name)
+            deleted.append(name)
+        else:
+            not_found.append(name)
+    return jsonify({"deleted": deleted, "not_found": not_found})
 
 
 # --- Twitter / X ------------------------------------------------------------
