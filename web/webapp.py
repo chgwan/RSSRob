@@ -876,6 +876,11 @@ def _backup_sources():
     return sources
 
 
+@app.route("/about")
+def about():
+    return render_template("about.html", active=None, sites=_safe_sites())
+
+
 @app.route("/backup")
 def backup_page():
     return render_template("backup.html", active=None, sites=_safe_sites(),
