@@ -123,3 +123,11 @@ def test_setup_redirects_to_login_when_credential_exists(tmp_path):
     wa = _wa(tmp_path); _set_cred(wa)
     r = wa.app.test_client().get("/setup")
     assert r.status_code == 302 and "/login" in r.headers["Location"]
+
+
+def test_login_ignores_open_redirect_next(tmp_path):
+    wa = _wa(tmp_path); _set_cred(wa)
+    r = wa.app.test_client().post("/login?next=//evil.com",
+                                  data={"username": "admin", "password": "s3cret"})
+    assert r.status_code == 302
+    assert "evil" not in r.headers["Location"]

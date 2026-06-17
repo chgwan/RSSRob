@@ -179,6 +179,7 @@ def login():
         username = (request.form.get("username") or "").strip()
         password = request.form.get("password") or ""
         if admin_credential.verify(cred, username, password):
+            app.secret_key = cred.secret_key          # match the persisted key (survives restart)
             session["user"] = cred.username
             session.permanent = True
             return redirect(nxt or url_for("index"))
@@ -214,6 +215,7 @@ def setup():
         else:
             cred = admin_credential.create(username, password, time.time())
             admin_credential.save(ADMIN_CRED_PATH, cred)
+            app.secret_key = cred.secret_key          # sign sessions with the persisted key (survives restart)
             session["user"] = cred.username
             session.permanent = True
             return redirect(url_for("index"))
