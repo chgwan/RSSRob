@@ -152,6 +152,7 @@ exists, else `config.yaml`, else `config.example.yaml`. Override with
 | `defaults.max_items` | `50` | Max items retained per feed (rolling window). |
 | `defaults.timeout` | `20` | HTTP fetch timeout in seconds. |
 | `defaults.user_agent` | `RSSRob/0.1` | User-Agent sent when fetching pages. |
+| `defaults.max_age_days` | `365` | Delete items older than this many days from the store, per feed (overridable). `0`/null keeps everything. |
 
 ### Per-site options
 
@@ -168,6 +169,8 @@ exists, else `config.yaml`, else `config.example.yaml`. Override with
 | `max_items` | no | Overrides `defaults.max_items` for this site. |
 | `proxy` | no | Per-feed proxy for `html`/`rss` fetches (honored by both `rssrob serve` and the web preview); accepts `socks5://ip:port`, `http(s)://ip:port`, or a bare port. (`twitter` uses the global proxy instead — see below.) |
 | `article` | no | "Go deeper" selectors (`title`/`content`): follow each item's link for the full title + body. |
+| `filter` | no | Keyword/regex include–exclude. A mapping with `include`/`exclude` (YAML list or comma-separated string), optional `field` (default `title`), optional `regex: true`. Excluded items are never stored. |
+| `max_age_days` | no | Overrides `defaults.max_age_days` for this feed. `0` keeps all history. |
 
 #### `rss` source example
 
@@ -253,6 +256,37 @@ The source page usually shows only *current* items, but a good feed should remem
 - The written `.xml` is the most recent `max_items` for that feed, ordered by date (or `first_seen` when no date is available).
 
 Result: items keep appearing in your feed even after they scroll off the source page, and nothing is ever duplicated.
+
+---
+
+## Filtering & recency
+
+Two optional knobs trim what each feed keeps.
+
+**Keyword / regex filters** — add a `filter:` block to drop items you don't
+want. Excluded items are dropped *before* they're stored, so they never reach
+the feed or email digests:
+
+```yaml
+name: example
+type: rss
+url: https://example.com/feed.xml
+filter:
+  include: [python, rust]     # keep only items matching one of these (omit to keep all)
+  exclude: [sponsored, ad]    # drop items matching any of these
+  field: title                # which item field to test (default: title)
+  regex: false                # true = treat terms as regex (re.search, case-insensitive)
+```
+
+Terms may be a YAML list or a comma-separated string. With `regex: false`
+(default) terms match as case-insensitive substrings; with `regex: true` each
+term is a regular expression (a malformed pattern is skipped, not fatal). The
+`/playground` page writes this block for you.
+
+**Recency** — RSSRob deletes items older than `max_age_days` (default **365**,
+one year) from the store on each cycle, by published date (falling back to
+`first_seen`). Override per feed with `max_age_days`, or set
+`defaults.max_age_days` globally; `0` (or null) keeps everything.
 
 ---
 
@@ -537,8 +571,6 @@ the last good feed.
 
 Deliberately left out to keep v1 light; easy to add later:
 
-- Keyword / regex include–exclude filters.
-- Date / recency filtering (drop items older than N days).
 - Per-feed item templates and full-content fetching (follow each link).
 - Cron-style schedules instead of fixed intervals.
 
