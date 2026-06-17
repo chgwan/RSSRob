@@ -2,18 +2,19 @@
 {% block title %}{{ display_title }} · RSSRob preview{% endblock %}
 {% block content %}
 
-  <h1 style="margin:.2rem 0 .1rem; font-size:1.25rem;">
-    {{ display_title }}
-    {% if source == "live" %}
-      <span class="badge live">● live</span>
-    {% elif source == "saved" %}
-      <span class="badge saved">● saved copy</span>
-    {% endif %}
-    <button id="delete-feed-btn" title="Remove this feed"
-            style="float:right; font-size:.78rem; color:#cf222e; background:none;
-                   border:1px solid #f0c8c8; border-radius:6px; padding:.2rem .55rem;
-                   cursor:pointer;">🗑 delete feed</button>
-  </h1>
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">feed · preview</div>
+      <h1>{{ display_title }}
+        {% if source == "live" %}
+          <span class="badge live">● live</span>
+        {% elif source == "saved" %}
+          <span class="badge saved">● saved copy</span>
+        {% endif %}
+      </h1>
+    </div>
+    <button id="delete-feed-btn" class="btn-danger" title="Remove this feed">🗑 delete feed</button>
+  </div>
   <script>
     document.getElementById("delete-feed-btn").addEventListener("click", async () => {
       if (!confirm("Remove the feed “{{ site.name }}”? This deletes its config, "
@@ -78,36 +79,43 @@
   {% endif %}
 
   <style>
-    .ok-banner { border-left:4px solid #1a7f37; background:#dafbe1; color:#1a4d2e;
-      padding:.6rem .9rem; border-radius:6px; margin:1rem 0; font-size:.9rem; }
-    form.subscribe { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap;
-      background:#f6f8fa; border:1px solid #d0d7de; border-radius:10px;
-      padding:.6rem .9rem; margin:1rem 0; }
-    form.subscribe .sub-label { font-size:.9rem; color:#1f2328; }
-    form.subscribe input[type=email] { flex:1; min-width:200px; padding:.4rem .55rem;
-      border:1px solid #d0d7de; border-radius:7px; font-size:.9rem; }
-    form.subscribe .freq { font-size:.85rem; color:#656d76; }
-    form.subscribe .freq input { width:3.4rem; padding:.35rem .4rem; border:1px solid #d0d7de;
-      border-radius:7px; font-size:.9rem; text-align:right; }
-    form.subscribe button { background:#0353a4; color:#fff; border:0;
-      padding:.45rem 1.1rem; border-radius:7px; font-size:.9rem; cursor:pointer; }
-    .sub-list .freq-tag { color:#656d76; font-size:.78rem; background:#eef1f4;
-      border-radius:999px; padding:.05rem .45rem; margin-left:.25rem; }
-    a.sub-count { font-size:.8rem; color:#0353a4; text-decoration:none; white-space:nowrap; }
+    .page-head { display:flex; align-items:flex-start; justify-content:space-between;
+      gap:1rem; flex-wrap:wrap; }
+    .page-head h1 { display:flex; align-items:center; gap:.6rem; flex-wrap:wrap; }
+    .btn-danger { background:var(--card); color:#B42A2E; border:1px solid #EBC9C9;
+      font:600 .76rem var(--mono); padding:.32rem .7rem; border-radius:8px; }
+    .btn-danger:hover { background:#FCECEC; border-color:#E0A8A8; }
+    .ok-banner { border-left:3px solid var(--live); background:#E1F6EE; color:#0B6D4E;
+      padding:.6rem .9rem; border-radius:8px; margin:1rem 0; font-size:.9rem; }
+    form.subscribe { display:flex; align-items:center; gap:.55rem; flex-wrap:wrap;
+      background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+      padding:.7rem .9rem; margin:1.1rem 0; box-shadow:var(--shadow); }
+    form.subscribe .sub-label { font-size:.9rem; color:var(--fg); font-weight:600; }
+    form.subscribe input[type=email] { flex:1; min-width:200px; }
+    form.subscribe .freq { font-size:.85rem; color:var(--muted); }
+    form.subscribe .freq input { width:3.6rem; text-align:right; }
+    form.subscribe button { background:var(--signal); color:#fff; border:1px solid var(--signal);
+      padding:.5rem 1.1rem; border-radius:8px; font-size:.9rem; }
+    form.subscribe button:hover { background:#E85D12; }
+    .sub-list .freq-tag { color:var(--muted); font:.72rem var(--mono); background:var(--bg);
+      border-radius:999px; padding:.08rem .45rem; margin-left:.3rem; }
+    a.sub-count { font:.78rem var(--mono); color:var(--accent); white-space:nowrap; }
     a.sub-count:hover { text-decoration:underline; }
-    .sub-list { background:#fff; border:1px solid #d0d7de; border-radius:10px;
-      padding:.6rem .9rem; margin:.2rem 0 1rem; font-size:.88rem; }
-    .sub-list-head { color:#656d76; margin-bottom:.4rem; }
+    .sub-list { background:var(--card); border:1px solid var(--line);
+      border-radius:var(--radius); padding:.7rem .95rem; margin:.2rem 0 1rem;
+      font-size:.88rem; box-shadow:var(--shadow); }
+    .sub-list-head { color:var(--muted); margin-bottom:.45rem;
+      font:600 .66rem var(--mono); letter-spacing:.1em; text-transform:uppercase; }
     .sub-list-head a { margin-left:.5rem; }
     .sub-list ul { list-style:none; margin:0; padding:0; }
     .sub-list li { display:flex; align-items:center; justify-content:space-between;
-      gap:.6rem; padding:.25rem 0; border-bottom:1px solid #f0f2f4; }
+      gap:.6rem; padding:.3rem 0; border-bottom:1px solid var(--line); }
     .sub-list li:last-child { border-bottom:0; }
     .sub-list li form { margin:0; }
-    .sub-list li button { background:none; border:0; color:#cf222e; cursor:pointer;
-      font-size:.8rem; padding:0; }
+    .sub-list li button { background:none; border:0; color:#B42A2E; cursor:pointer;
+      font:.8rem var(--mono); padding:0; }
     .sub-list li button:hover { text-decoration:underline; }
-    .sub-list .empty { color:#656d76; }
+    .sub-list .empty { color:var(--muted); }
   </style>
 
   <div class="meta">
