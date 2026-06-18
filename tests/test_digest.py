@@ -301,3 +301,31 @@ def test_cli_requires_exactly_one_mode(tmp_path):
     cfg = _write_two_feed_config(tmp_path)
     rc = digest.main(["--config", cfg])              # no mode chosen
     assert rc == 2
+
+
+def test_cli_site_mode_returns_1_on_send_error(monkeypatch, tmp_path):
+    from rssrob.subscribers import Subscribers
+    cfg = _write_two_feed_config(tmp_path)
+    subs_path = str(tmp_path / "subs.json")
+    Subscribers(subs_path).add("a", "x@e.com")
+    monkeypatch.setattr(digest, "load_dotenv", lambda *a, **k: None)
+    monkeypatch.setattr(digest, "send_feed_digest",
+                        lambda *a, **k: {"subject": "S", "items": 2, "sent": 0,
+                                        "no_new": False,
+                                        "errors": [("x@e.com", "EmailError: nope")]})
+    rc = digest.main(["--site", "a", "--config", cfg, "--subscribers", subs_path])
+    assert rc == 1
+
+
+def test_cli_all_subscribers_returns_1_on_send_failure(monkeypatch, tmp_path):
+    from rssrob.subscribers import Subscribers
+    cfg = _write_two_feed_config(tmp_path)
+    subs_path = str(tmp_path / "subs.json")
+    Subscribers(subs_path).add("a", "x@e.com")
+    monkeypatch.setattr(digest, "load_dotenv", lambda *a, **k: None)
+    monkeypatch.setattr(digest, "send_subscriber_digest",
+                        lambda subscriber, sites, **kw: {"subject": "S", "items": 2,
+                            "feeds": 1, "sent": 0, "no_new": False,
+                            "errors": [("*", "EmailError: nope")]})
+    rc = digest.main(["--all-subscribers", "--config", cfg, "--subscribers", subs_path])
+    assert rc == 1

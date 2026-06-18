@@ -414,14 +414,17 @@ def main(argv=None) -> int:
             return 1
         if result.get("no_new"):
             print(f"no new items for {site.name!r} since last send (use --all to resend)")
-        elif args.dry_run:
+            return 0
+        if args.dry_run:
             print(f"[dry-run] subject: {result['subject']}")
             print(f"[dry-run] {result['items']} new item(s) -> {len(recipients)} recipient(s): "
                   f"{', '.join(recipients)}")
-        else:
-            print(f"sent '{result['subject']}' ({result['items']} item(s)) to "
-                  f"{result['sent']} recipient(s) in one email")
-        return 0
+            return 0
+        print(f"sent '{result['subject']}' ({result['items']} item(s)) to "
+              f"{result['sent']} recipient(s) in one email")
+        for r, err in result["errors"]:
+            print(f"  FAILED {r}: {err}", file=sys.stderr)
+        return 0 if not result["errors"] else 1
 
     # --- combined per-subscriber send ---
     by_email = Subscribers(args.subscribers).by_email()
@@ -437,6 +440,7 @@ def main(argv=None) -> int:
             print("no subscribers", file=sys.stderr)
             return 1
 
+    failed = False
     sites_by_name = {s.name: s for s in config.sites}
     for email, info in targets.items():
         sites = [sites_by_name[f] for f in info["feeds"] if f in sites_by_name]
@@ -448,11 +452,14 @@ def main(argv=None) -> int:
         elif args.dry_run:
             print(f"[dry-run] {email}: {result['items']} item(s) across "
                   f"{result['feeds']} feed(s) — {result['subject']}")
-        else:
+        elif result.get("sent"):
             print(f"{email}: sent {result['items']} item(s) across {result['feeds']} feed(s)")
+        else:
+            failed = True
+            print(f"{email}: send failed", file=sys.stderr)
         for name, msg in result.get("errors", []):
             print(f"  {email} / {name}: {msg}", file=sys.stderr)
-    return 0
+    return 0 if not failed else 1
 
 
 if __name__ == "__main__":
