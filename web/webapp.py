@@ -1103,4 +1103,4 @@ if __name__ == "__main__":
             except ImportError:
                 print("  note: SOCKS proxies need PySocks → pip install 'requests[socks]'")
 
-    app.run(host=args.host, port=args.port, debug=True)
+    app.run(host=args.host, port=args.port, debug=True, use_reloader=False)
