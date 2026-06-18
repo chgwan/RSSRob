@@ -286,6 +286,64 @@ def send_feed_digest(site, recipients: List[str], limit: int = 10,
             "sent": sent, "errors": errors, "dry_run": False, "no_new": False}
 
 
+def send_subscriber_digest(subscriber, sites, *, limit: int = 10,
+                           first_limit: int = 20, fetcher=None,
+                           dry_run: bool = False, state=None,
+                           only_new: bool = True) -> dict:
+    """Email one subscriber a single combined digest across all `sites` they
+    follow. Incremental state is tracked per subscriber (only items not sent to
+    THIS subscriber are included, then recorded after a successful send). A feed
+    that fails to fetch is skipped and reported; the others are still sent."""
+    sections = []
+    to_mark = []                       # (feed_name, [item_keys]) to record on success
+    errors = []
+    for site in sites:
+        f = fetcher or Fetcher(proxy=getattr(site, "proxy", None))
+        try:
+            items, feed_title, _ = obtain_items(site, f)
+            seen = state.seen_ids(site.name, subscriber) if state is not None else set()
+            first_send = state is not None and not seen
+            if only_new and state is not None:
+                items = [it for it in items if _item_key(it) not in seen]
+            cap = first_limit if (only_new and first_send) else limit
+            items = items[:cap]
+            if not items:
+                continue
+            entries = enrich_items(site, items, f)
+        except Exception as e:
+            errors.append((site.name, f"{type(e).__name__}: {e}"))
+            continue
+        sections.append({"title": site.title or feed_title or site.name,
+                         "entries": entries})
+        to_mark.append((site.name, [_item_key(it) for it in items]))
+
+    if not sections:
+        return {"subject": None, "feeds": 0, "items": 0, "sent": 0,
+                "errors": errors, "dry_run": dry_run, "no_new": True}
+
+    subject, text, html_body = build_combined_digest(sections)
+    total = sum(len(s["entries"]) for s in sections)
+
+    if dry_run:
+        return {"subject": subject, "text": text, "html": html_body,
+                "feeds": len(sections), "items": total, "sent": 0,
+                "errors": errors, "dry_run": True, "no_new": False}
+
+    try:
+        send_email([subscriber], subject, text, html=html_body)
+    except Exception as e:
+        return {"subject": subject, "feeds": len(sections), "items": total,
+                "sent": 0, "errors": errors + [("*", f"{type(e).__name__}: {e}")],
+                "dry_run": False, "no_new": False}
+
+    if state is not None:
+        for feed_name, keys in to_mark:
+            state.mark(feed_name, keys, subscriber)
+
+    return {"subject": subject, "feeds": len(sections), "items": total,
+            "sent": 1, "errors": errors, "dry_run": False, "no_new": False}
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(
         prog="rssrob.digest",
