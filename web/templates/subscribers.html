@@ -16,10 +16,10 @@
     <div class="notice">{{ add_error }}</div>
   {% endif %}
   {% if sent %}
-    {% if sent_n and sent_n|int > 0 %}
-      <div class="ok-banner">✓ Sent {{ sent_n }} digest{{ '' if sent_n|int == 1 else 's' }}
-        to <strong>{{ sent }}</strong>{% if nonew_n and nonew_n|int > 0 %}
-        ({{ nonew_n }} feed{{ '' if nonew_n|int == 1 else 's' }} had no new items){% endif %}.</div>
+    {% if sent_items and sent_items|int > 0 %}
+      <div class="ok-banner">✓ Sent a digest to <strong>{{ sent }}</strong>
+        — {{ sent_items }} item{{ '' if sent_items|int == 1 else 's' }} across
+        {{ sent_feeds }} feed{{ '' if sent_feeds|int == 1 else 's' }}.</div>
     {% else %}
       <div class="ok-banner">No new items for <strong>{{ sent }}</strong>'s feeds — nothing sent.</div>
     {% endif %}

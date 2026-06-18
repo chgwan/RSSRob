@@ -1,6 +1,6 @@
 """Tests for the /send-now route — email a subscriber their feeds' new items now.
 
-send_feed_digest is monkeypatched so no real email is ever sent."""
+send_subscriber_digest is monkeypatched so no real email is ever sent."""
 import importlib.util
 import sys
 from pathlib import Path
@@ -32,40 +32,40 @@ def _app(tmp_path, monkeypatch):
     return wa
 
 
-def test_send_now_sends_each_followed_feed_to_that_subscriber_only(tmp_path, monkeypatch):
+def test_send_now_sends_one_combined_email_to_that_subscriber(tmp_path, monkeypatch):
     wa = _app(tmp_path, monkeypatch)
     wa.SUBS.add("a", "x@e.com"); wa.SUBS.add("b", "x@e.com")
-    wa.SUBS.add("a", "other@e.com")                 # must NOT receive anything
+    wa.SUBS.add("a", "other@e.com")                  # must NOT be included
     calls = []
 
-    def fake_send(site, recipients, **kw):
-        calls.append((site.name, tuple(recipients), kw.get("only_new")))
-        return {"sent": len(recipients), "items": 3, "no_new": False, "errors": []}
+    def fake_send(subscriber, sites, **kw):
+        calls.append((subscriber, tuple(s.name for s in sites), kw.get("only_new")))
+        return {"sent": 1, "items": 5, "feeds": 2, "no_new": False, "errors": []}
 
-    monkeypatch.setattr(wa, "send_feed_digest", fake_send)
+    monkeypatch.setattr(wa, "send_subscriber_digest", fake_send)
     r = wa.app.test_client().post("/send-now", data={"email": "x@e.com"})
     assert r.status_code == 302 and "/subscribers" in r.headers["Location"]
-    assert set(calls) == {("a", ("x@e.com",), True), ("b", ("x@e.com",), True)}
+    assert calls == [("x@e.com", ("a", "b"), True)]  # ONE call, both feeds, that subscriber
 
 
 def test_send_now_success_banner(tmp_path, monkeypatch):
     wa = _app(tmp_path, monkeypatch)
     wa.SUBS.add("a", "x@e.com")
-    monkeypatch.setattr(wa, "send_feed_digest",
-                        lambda site, recipients, **kw: {"sent": 1, "items": 2,
-                                                        "no_new": False, "errors": []})
+    monkeypatch.setattr(wa, "send_subscriber_digest",
+                        lambda subscriber, sites, **kw: {"sent": 1, "items": 3, "feeds": 1,
+                                                         "no_new": False, "errors": []})
     r = wa.app.test_client().post("/send-now", data={"email": "x@e.com"},
                                   follow_redirects=True)
     assert r.status_code == 200
-    assert b"Sent 1 digest" in r.data and b"x@e.com" in r.data
+    assert b"Sent a digest" in r.data and b"x@e.com" in r.data and b"3 item" in r.data
 
 
 def test_send_now_reports_no_new_items(tmp_path, monkeypatch):
     wa = _app(tmp_path, monkeypatch)
     wa.SUBS.add("a", "x@e.com")
-    monkeypatch.setattr(wa, "send_feed_digest",
-                        lambda site, recipients, **kw: {"sent": 0, "items": 0,
-                                                        "no_new": True, "errors": []})
+    monkeypatch.setattr(wa, "send_subscriber_digest",
+                        lambda subscriber, sites, **kw: {"sent": 0, "items": 0, "feeds": 0,
+                                                         "no_new": True, "errors": []})
     r = wa.app.test_client().post("/send-now", data={"email": "x@e.com"},
                                   follow_redirects=True)
     assert b"nothing sent" in r.data.lower()
@@ -74,8 +74,7 @@ def test_send_now_reports_no_new_items(tmp_path, monkeypatch):
 def test_send_now_rejects_non_subscriber(tmp_path, monkeypatch):
     wa = _app(tmp_path, monkeypatch)
     called = []
-    monkeypatch.setattr(wa, "send_feed_digest",
-                        lambda *a, **k: called.append(1) or {})
+    monkeypatch.setattr(wa, "send_subscriber_digest", lambda *a, **k: called.append(1) or {})
     r = wa.app.test_client().post("/send-now", data={"email": "ghost@e.com"},
                                   follow_redirects=True)
     assert called == []                              # nothing sent
@@ -86,9 +85,9 @@ def test_send_now_surfaces_send_errors(tmp_path, monkeypatch):
     wa = _app(tmp_path, monkeypatch)
     wa.SUBS.add("a", "x@e.com")
     monkeypatch.setattr(
-        wa, "send_feed_digest",
-        lambda site, recipients, **kw: {"sent": 0, "items": 2, "no_new": False,
-                                        "errors": [("*", "EmailError: SMTP not configured")]})
+        wa, "send_subscriber_digest",
+        lambda subscriber, sites, **kw: {"sent": 0, "items": 2, "feeds": 1, "no_new": False,
+                                         "errors": [("a", "EmailError: SMTP not configured")]})
     r = wa.app.test_client().post("/send-now", data={"email": "x@e.com"},
                                   follow_redirects=True)
     assert b"failed" in r.data.lower() and b"smtp" in r.data.lower()

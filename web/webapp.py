@@ -39,7 +39,7 @@ from flask import (Flask, abort, jsonify, redirect, render_template, request,
 from rssrob.article import fetch_article
 from rssrob.backup import build_backup, restore_backup
 from rssrob.config import ConfigError, load_config, normalize_proxy
-from rssrob.digest import SentStore, send_feed_digest
+from rssrob.digest import SentStore, send_subscriber_digest
 from rssrob.filters import apply_filter, parse_terms
 from rssrob.extract import extract_items
 from rssrob import admin_credential
@@ -473,17 +473,16 @@ def email_list():
                            added=request.args.get("added"),
                            add_error=request.args.get("add_error"),
                            sent=request.args.get("sent"),
-                           sent_n=request.args.get("sent_n"),
-                           nonew_n=request.args.get("nonew_n"),
+                           sent_items=request.args.get("sent_items"),
+                           sent_feeds=request.args.get("sent_feeds"),
                            send_error=request.args.get("send_error"))
 
 
 @app.route("/send-now", methods=["POST"])
 def send_now():
-    """Email one subscriber the new items from every feed they follow, now.
-
-    Runs the same incremental digest the scheduler uses (only items not sent
-    before, then marked sent) but to this single address."""
+    """Email one subscriber a single combined digest of the new items across
+    every feed they follow, now. Incremental per-subscriber state is recorded so
+    repeat clicks only send genuinely new items, independently per subscriber."""
     email = (request.form.get("email") or "").strip().lower()
     info = SUBS.by_email().get(email)
     if not info:
@@ -494,37 +493,24 @@ def send_now():
     except Exception as e:
         return redirect(url_for("email_list", send_error=f"config error: {e}"))
 
-    sites = {s.name: s for s in config.sites}
+    sites_by_name = {s.name: s for s in config.sites}
+    sites = [sites_by_name[f] for f in info["feeds"] if f in sites_by_name]
     limit = int(config.digest.get("limit", 10))
     first_limit = int(config.digest.get("first_limit", 20))
     state = SentStore(str(REPO_ROOT / "var" / "digest_state.json"))
     load_dotenv()                      # SMTP config from .env (real env still wins)
 
-    sent = no_new = 0
-    errors = []
-    for feed in info["feeds"]:
-        site = sites.get(feed)
-        if site is None:               # feed no longer configured — skip
-            continue
-        try:
-            result = send_feed_digest(site, [email], limit=limit,
-                                      first_limit=first_limit, state=state,
-                                      only_new=True)
-        except Exception as e:
-            errors.append(f"{feed}: {type(e).__name__}: {e}")
-            continue
-        if result.get("errors"):
-            errors.extend(f"{feed}: {msg}" for _, msg in result["errors"])
-        elif result.get("no_new"):
-            no_new += 1
-        elif result.get("sent"):
-            sent += 1
+    result = send_subscriber_digest(email, sites, limit=limit,
+                                    first_limit=first_limit, state=state, only_new=True)
 
-    if errors:
+    if result.get("errors"):
+        msgs = "; ".join(f"{name}: {msg}" for name, msg in result["errors"][:3])
         return redirect(url_for("email_list",
-                                send_error=f"sending to {email} failed — "
-                                           + "; ".join(errors[:3])))
-    return redirect(url_for("email_list", sent=email, sent_n=sent, nonew_n=no_new))
+                                send_error=f"sending to {email} failed — {msgs}"))
+    if result.get("no_new"):
+        return redirect(url_for("email_list", sent=email, sent_items=0))
+    return redirect(url_for("email_list", sent=email,
+                            sent_items=result["items"], sent_feeds=result["feeds"]))
 
 
 @app.route("/add-feed", methods=["POST"])
