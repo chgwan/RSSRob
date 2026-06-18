@@ -303,6 +303,17 @@ rssrob run-once <site-name> [--config config.yaml]
 ```
 Scrapes a single site **once**, prints the extracted items to the terminal, and exits. Intended for debugging selectors before adding a site to your regular schedule. (By default it does not write to the store; pass `--write` to also persist + regenerate that feed.)
 
+```bash
+python -m rssrob.digest --all-subscribers [--config config.yaml] [--dry-run]
+```
+Emails **each subscriber one combined digest** containing the new items across
+every feed they follow (incremental — only items not already sent to that
+subscriber). Use `--subscriber you@example.com` for a single subscriber, or
+`--dry-run` to preview without sending. Run it from your own cron/timer at
+whatever cadence you want. The legacy `--site <feed>` mode (one email per feed to
+all its subscribers) still exists but uses a separate global sent-state; pick one
+mode for a given schedule.
+
 ---
 
 ## Project structure
