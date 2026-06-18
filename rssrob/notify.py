@@ -135,7 +135,10 @@ def send_email(to: Union[str, Sequence[str]], subject: str, body: str,
             server.starttls(context=ssl.create_default_context())
         if cfg.user and cfg.password:
             server.login(cfg.user, cfg.password)
-        server.send_message(msg)
+        # Deliver to the exact envelope (to + bcc). Without to_addrs, smtplib
+        # derives recipients from the headers, which on Bcc-only sends includes
+        # the sender placeholder in `To:` — so the sender wrongly gets a copy.
+        server.send_message(msg, to_addrs=envelope)
     return envelope
 
 

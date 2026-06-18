@@ -20,8 +20,10 @@ class FakeSMTP:
     def login(self, user, password):
         self.calls.append(("login", user, password))
 
-    def send_message(self, msg):
-        self.calls.append(("send", msg))
+    def send_message(self, msg, to_addrs=None):
+        # Mirror smtplib: when to_addrs is omitted, delivery falls back to the
+        # message's To/Cc/Bcc headers (which would include the sender placeholder).
+        self.calls.append(("send", msg, to_addrs))
 
 
 def test_build_message_plain_and_html():
@@ -64,6 +66,21 @@ def test_send_email_bcc_one_message_hides_recipients():
     msg = sends[0][1]
     assert msg["Bcc"] == "a@b, c@d"                  # recipients in Bcc
     assert msg["To"] == "from@x"                     # To defaults to sender
+
+
+def test_send_email_bcc_envelope_excludes_sender():
+    """Bcc-only send must deliver to exactly the bcc recipients via an explicit
+    SMTP envelope — never to the sender (whose address is only a cosmetic To:
+    placeholder). Regression: the sender used to receive every digest."""
+    cfg = SmtpConfig(host="h", sender="from@x")
+    fake = FakeSMTP()
+    env = send_email([], "s", "b", bcc=["a@b", "c@d"], config=cfg,
+                     smtp_factory=lambda: fake)
+    send = next(c for c in fake.calls if c[0] == "send")
+    to_addrs = send[2]
+    assert to_addrs == ["a@b", "c@d"]                # explicit envelope passed
+    assert "from@x" not in to_addrs                  # sender never delivered to
+    assert env == to_addrs                           # returned list == delivery
 
 
 def test_send_email_no_recipients():
