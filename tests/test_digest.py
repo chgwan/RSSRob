@@ -50,6 +50,23 @@ def test_sent_store_mark_and_dedupe(tmp_path):
     assert s.seen_ids("f") == {"a", "b", "c"}
 
 
+def test_sent_store_per_subscriber_isolation(tmp_path):
+    s = digest.SentStore(str(tmp_path / "s.json"))
+    s.mark("f", ["a"], subscriber="alice@x")
+    assert s.seen_ids("f", "alice@x") == {"a"}
+    assert s.seen_ids("f", "bob@x") == set()       # other subscriber isolated
+    assert s.seen_ids("f") == set()                # global namespace untouched
+
+
+def test_sent_store_subscriber_inherits_legacy_global_baseline(tmp_path):
+    s = digest.SentStore(str(tmp_path / "s.json"))
+    s.mark("f", ["g1", "g2"])                       # legacy/global send (subscriber=None)
+    assert s.seen_ids("f", "alice@x") == {"g1", "g2"}   # baseline counts as seen
+    s.mark("f", ["a1"], subscriber="alice@x")
+    assert s.seen_ids("f", "alice@x") == {"g1", "g2", "a1"}
+    assert s.seen_ids("f", "bob@x") == {"g1", "g2"}     # baseline shared, per-sub not
+
+
 def test_select_new_items(tmp_path):
     items = [Item(id="1", title="a", link="l1"), Item(id="2", title="b", link="l2")]
     s = digest.SentStore(str(tmp_path / "s.json"))

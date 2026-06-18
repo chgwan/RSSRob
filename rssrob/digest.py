@@ -82,6 +82,7 @@ class SentStore:
     recent ids per feed to avoid unbounded growth."""
 
     CAP = 1000
+    _SUBS_KEY = "__by_subscriber__"   # namespace unlikely to collide with a feed name
 
     def __init__(self, path):
         self.path = path
@@ -101,22 +102,35 @@ class SentStore:
             json.dump(data, f, ensure_ascii=False, indent=2, sort_keys=True)
         os.replace(tmp, self.path)
 
-    def seen_ids(self, feed):
-        return set(self._load().get(feed, []))
+    def seen_ids(self, feed, subscriber=None):
+        data = self._load()
+        if subscriber is None:
+            return set(data.get(feed, []))
+        # per-subscriber set, unioned with the legacy global set as a baseline so
+        # items already delivered before per-subscriber tracking count as seen.
+        legacy = set(data.get(feed, []))
+        per = data.get(self._SUBS_KEY, {}).get(subscriber, {}).get(feed, [])
+        return legacy | set(per)
 
-    def mark(self, feed, ids):
+    def mark(self, feed, ids, subscriber=None):
         ids = [i for i in ids if i]
         if not ids:
             return
         with self._lock:
             data = self._load()
-            lst = data.setdefault(feed, [])
+            if subscriber is None:
+                lst = data.setdefault(feed, [])
+            else:
+                lst = (data.setdefault(self._SUBS_KEY, {})
+                           .setdefault(subscriber, {})
+                           .setdefault(feed, []))
             existing = set(lst)
             for i in ids:
                 if i not in existing:
                     lst.append(i)
                     existing.add(i)
-            data[feed] = lst[-self.CAP:]
+            if len(lst) > self.CAP:
+                del lst[:-self.CAP]
             self._save(data)
 
 
