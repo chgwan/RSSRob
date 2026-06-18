@@ -259,3 +259,45 @@ def test_subscriber_digest_dry_run_builds_without_send_or_state(monkeypatch, tmp
     assert res["dry_run"] and res["sent"] == 0 and res["subject"]
     assert calls == []                               # nothing sent
     assert state.seen_ids("a", "alice@x") == set()   # nothing marked
+
+
+# --- digest CLI subscriber modes -------------------------------------------
+
+def _write_two_feed_config(tmp_path):
+    d = tmp_path / "configs"; d.mkdir()
+    (d / "a.yaml").write_text("name: a\ntype: rss\nurl: http://a/\n", encoding="utf-8")
+    (d / "b.yaml").write_text("name: b\ntype: rss\nurl: http://b/\n", encoding="utf-8")
+    return str(d)
+
+
+def test_cli_all_subscribers_sends_each_one_combined(monkeypatch, tmp_path):
+    from rssrob.subscribers import Subscribers
+    cfg = _write_two_feed_config(tmp_path)
+    subs_path = str(tmp_path / "subs.json")
+    s = Subscribers(subs_path)
+    s.add("a", "x@e.com"); s.add("b", "x@e.com"); s.add("a", "y@e.com")
+    seen = []
+    monkeypatch.setattr(digest, "send_subscriber_digest",
+                        lambda subscriber, sites, **kw: seen.append(
+                            (subscriber, tuple(si.name for si in sites)))
+                        or {"sent": 1, "items": 2, "feeds": len(sites),
+                            "no_new": False, "errors": [], "subject": "x"})
+    monkeypatch.setattr(digest, "load_dotenv", lambda *a, **k: None)
+    rc = digest.main(["--all-subscribers", "--config", cfg, "--subscribers", subs_path])
+    assert rc == 0
+    assert ("x@e.com", ("a", "b")) in seen and ("y@e.com", ("a",)) in seen
+
+
+def test_cli_subscriber_mode_unknown_email_returns_1(monkeypatch, tmp_path):
+    cfg = _write_two_feed_config(tmp_path)
+    subs_path = str(tmp_path / "subs.json")
+    monkeypatch.setattr(digest, "load_dotenv", lambda *a, **k: None)
+    rc = digest.main(["--subscriber", "ghost@e.com", "--config", cfg,
+                      "--subscribers", subs_path])
+    assert rc == 1
+
+
+def test_cli_requires_exactly_one_mode(tmp_path):
+    cfg = _write_two_feed_config(tmp_path)
+    rc = digest.main(["--config", cfg])              # no mode chosen
+    assert rc == 2
