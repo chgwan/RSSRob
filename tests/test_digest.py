@@ -152,3 +152,110 @@ def test_all_ignores_state(fixtures, make_fetcher, monkeypatch, tmp_path):
     assert digest.send_feed_digest(_site(), ["a@b.com"], fetcher=fetcher, state=state).get("no_new")
     r = digest.send_feed_digest(_site(), ["a@b.com"], fetcher=fetcher, state=state, only_new=False)
     assert not r.get("no_new") and r["sent"] == 1 and len(calls) == 2
+
+
+# --- combined per-subscriber digest ----------------------------------------
+
+def _orchestration(monkeypatch, per_feed):
+    """Fake obtain_items/enrich_items so these tests exercise orchestration, not
+    feed parsing. `per_feed` is {feed_name: [Item, ...]} and is read live, so
+    callers may mutate it between sends. Returns the recorded send_email calls."""
+    def fake_obtain(site, fetcher):
+        return list(per_feed.get(site.name, [])), site.title or site.name, None
+
+    def fake_enrich(site, items, fetcher):
+        return [{"title": it.title, "link": it.link,
+                 "date": it.date or "", "description": it.summary} for it in items]
+
+    monkeypatch.setattr(digest, "obtain_items", fake_obtain)
+    monkeypatch.setattr(digest, "enrich_items", fake_enrich)
+    calls = []
+    monkeypatch.setattr(digest, "send_email",
+                        lambda to, subject, body, html=None, bcc=None:
+                        calls.append({"to": to, "subject": subject, "body": body}))
+    return calls
+
+
+def _S(name, title):
+    return Site(name=name, url=f"http://{name}/", type="rss", title=title)
+
+
+def test_subscriber_digest_combines_feeds_into_one_email(monkeypatch, tmp_path):
+    a, b = _S("a", "Feed A"), _S("b", "Feed B")
+    calls = _orchestration(monkeypatch, {
+        "a": [Item(id="a1", title="A one", link="http://a/1", summary="sa")],
+        "b": [Item(id="b1", title="B one", link="http://b/1", summary="sb"),
+              Item(id="b2", title="B two", link="http://b/2", summary="sb2")]})
+    state = digest.SentStore(str(tmp_path / "s.json"))
+    res = digest.send_subscriber_digest("alice@x", [a, b], state=state, fetcher=object())
+    assert len(calls) == 1                           # ONE combined email
+    assert calls[0]["to"] == ["alice@x"]             # To: subscriber, not Bcc
+    assert res["feeds"] == 2 and res["items"] == 3 and res["sent"] == 1
+    assert "Feed A" in calls[0]["body"] and "Feed B" in calls[0]["body"]
+    assert "across 2 feeds" in calls[0]["subject"]
+
+
+def test_subscriber_digest_marks_only_that_subscriber(monkeypatch, tmp_path):
+    a = _S("a", "Feed A")
+    _orchestration(monkeypatch, {"a": [Item(id="a1", title="A1", link="http://a/1", summary="s")]})
+    state = digest.SentStore(str(tmp_path / "s.json"))
+    digest.send_subscriber_digest("alice@x", [a], state=state, fetcher=object())
+    assert state.seen_ids("a", "alice@x") == {"a1"}
+    assert state.seen_ids("a", "bob@x") == set()     # bob unaffected
+
+
+def test_subscriber_digest_no_new_sends_nothing(monkeypatch, tmp_path):
+    a = _S("a", "Feed A")
+    calls = _orchestration(monkeypatch, {"a": [Item(id="a1", title="A1", link="http://a/1", summary="s")]})
+    state = digest.SentStore(str(tmp_path / "s.json"))
+    digest.send_subscriber_digest("alice@x", [a], state=state, fetcher=object())  # marks a1
+    res = digest.send_subscriber_digest("alice@x", [a], state=state, fetcher=object())
+    assert res["no_new"] and res["sent"] == 0
+    assert len(calls) == 1                           # only the first send went out
+
+
+def test_subscriber_digest_partial_feed_error_still_sends_rest(monkeypatch, tmp_path):
+    good, bad = _S("good", "Good"), _S("bad", "Bad")
+
+    def fake_obtain(site, fetcher):
+        if site.name == "bad":
+            raise RuntimeError("boom")
+        return [Item(id="g1", title="G1", link="http://g/1", summary="s")], "Good", None
+
+    monkeypatch.setattr(digest, "obtain_items", fake_obtain)
+    monkeypatch.setattr(digest, "enrich_items",
+                        lambda site, items, fetcher: [{"title": it.title, "link": it.link,
+                            "date": "", "description": it.summary} for it in items])
+    calls = []
+    monkeypatch.setattr(digest, "send_email",
+                        lambda to, s, b, html=None, bcc=None: calls.append(to))
+    state = digest.SentStore(str(tmp_path / "s.json"))
+    res = digest.send_subscriber_digest("alice@x", [good, bad], state=state, fetcher=object())
+    assert len(calls) == 1 and res["feeds"] == 1 and res["sent"] == 1
+    assert any(name == "bad" for name, _ in res["errors"])
+
+
+def test_subscriber_digest_first_limit_then_incremental_limit(monkeypatch, tmp_path):
+    a = _S("a", "Feed A")
+    pool = {"a": [Item(id=f"n{i}", title=f"t{i}", link=f"http://a/{i}", summary="s")
+                  for i in range(3)]}
+    _orchestration(monkeypatch, pool)
+    state = digest.SentStore(str(tmp_path / "s.json"))
+    r1 = digest.send_subscriber_digest("alice@x", [a], first_limit=2, limit=3,
+                                       state=state, fetcher=object())
+    assert r1["items"] == 2                           # first send capped at first_limit
+    pool["a"] += [Item(id=f"m{i}", title=f"m{i}", link=f"http://a/m{i}", summary="s")
+                  for i in range(5)]                  # 6 new now available
+    r2 = digest.send_subscriber_digest("alice@x", [a], first_limit=2, limit=3,
+                                       state=state, fetcher=object())
+    assert r2["items"] == 3                           # not first send -> capped at limit
+
+
+def test_subscriber_digest_dry_run_builds_without_send_or_state(monkeypatch, tmp_path):
+    a = _S("a", "Feed A")
+    calls = _orchestration(monkeypatch, {"a": [Item(id="a1", title="A1", link="http://a/1", summary="s")]})
+    state = digest.SentStore(str(tmp_path / "s.json"))
+    res = digest.send_subscriber_digest("alice@x", [a], state=state, dry_run=True, fetcher=object())
+    assert res["dry_run"] and res["sent"] == 0 and res["subject"]
+    assert calls == []                               # nothing sent
+    assert state.seen_ids("a", "alice@x") == set()   # nothing marked
