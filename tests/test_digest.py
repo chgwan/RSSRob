@@ -34,6 +34,27 @@ def test_build_digest_date_title_description():
     assert '<a href="http://x/2"' in html and "06-14" in html
 
 
+def test_build_combined_digest_multi_feed():
+    sections = [
+        {"title": "Feed A", "entries": [
+            {"title": "A1", "link": "http://a/1", "date": "06-18", "description": "da"}]},
+        {"title": "Feed B", "entries": [
+            {"title": "B1", "link": "http://b/1", "date": "06-17", "description": None},
+            {"title": "B2", "link": "http://b/2", "date": "06-16", "description": "db"}]},
+    ]
+    subject, text, html = digest.build_combined_digest(sections)
+    assert subject == "[RSSRob] 3 updates across 2 feeds"
+    assert "Feed A" in text and "Feed B" in text and "A1" in text and "B2" in text
+    assert "Feed A" in html and "Feed B" in html and '<a href="http://a/1"' in html
+
+
+def test_build_combined_digest_single_feed_uses_single_style():
+    sections = [{"title": "Only", "entries": [
+        {"title": "X", "link": "http://x", "date": "", "description": None}]}]
+    subject, _text, _html = digest.build_combined_digest(sections)
+    assert subject == "[RSSRob] Only — 1 update"     # delegates to single-feed style
+
+
 def test_shorten_truncates_and_strips_leading_css():
     long = "@page{size:a4} p{m:0} " + ("word " * 100)
     out = digest._shorten(long, n=40)

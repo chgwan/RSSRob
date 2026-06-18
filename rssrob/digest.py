@@ -163,11 +163,12 @@ def enrich_items(site, items, fetcher) -> List[dict]:
     return entries
 
 
-def build_digest(title: str, entries: List[dict]) -> tuple:
-    """Return (subject, text_body, html_body): date + full title + short desc."""
+def _render_section(title: str, entries: List[dict]) -> tuple:
+    """Render one feed's items as (text_block, html_block): a header plus a
+    dated title / short-description / link list. Shared by single and combined
+    digests so the markup stays identical."""
     n = len(entries)
     plural = "" if n == 1 else "s"
-    subject = f"[RSSRob] {title} — {n} update{plural}"
 
     text_lines = [f"{title} — {n} item{plural}", ""]
     for e in entries:
@@ -178,7 +179,7 @@ def build_digest(title: str, entries: List[dict]) -> tuple:
         if e["link"]:
             text_lines.append(f"  {e['link']}")
         text_lines.append("")
-    text = "\n".join(text_lines)
+    text_block = "\n".join(text_lines)
 
     rows = []
     for e in entries:
@@ -195,14 +196,47 @@ def build_digest(title: str, entries: List[dict]) -> tuple:
             f'padding:.45rem 12px .45rem 0;vertical-align:top">{date}</td>'
             f'<td style="padding:.45rem 0;vertical-align:top">{head}{desc}</td>'
             '</tr>')
-    html_body = (
-        '<div style="max-width:680px;margin:0 auto;'
-        'font-family:system-ui,-apple-system,Arial,sans-serif;color:#222">'
+    html_block = (
         f'<h2 style="font-size:1.2rem;margin:0 0 .2rem">{_html.escape(title)}</h2>'
         f'<p style="color:#666;margin:.1rem 0 .8rem">{n} update{plural}</p>'
-        f'<table style="border-collapse:collapse;width:100%">{"".join(rows)}</table>'
+        f'<table style="border-collapse:collapse;width:100%">{"".join(rows)}</table>')
+    return text_block, html_block
+
+
+def _wrap_html(inner: str) -> str:
+    """Wrap one or more rendered section blocks in the email shell + footer."""
+    return (
+        '<div style="max-width:680px;margin:0 auto;'
+        'font-family:system-ui,-apple-system,Arial,sans-serif;color:#222">'
+        f'{inner}'
         '<p style="color:#999;font-size:85%;margin-top:1rem">Sent by RSSRob.</p></div>')
-    return subject, text, html_body
+
+
+def build_digest(title: str, entries: List[dict]) -> tuple:
+    """Return (subject, text_body, html_body) for ONE feed: date + full title +
+    short description."""
+    n = len(entries)
+    plural = "" if n == 1 else "s"
+    subject = f"[RSSRob] {title} — {n} update{plural}"
+    text_block, html_block = _render_section(title, entries)
+    return subject, text_block, _wrap_html(html_block)
+
+
+def build_combined_digest(sections: List[dict]) -> tuple:
+    """Return (subject, text_body, html_body) for one combined email across
+    several feeds. `sections` is [{"title": str, "entries": [...]}, ...] for
+    feeds that have items. A single section delegates to the single-feed style."""
+    if len(sections) == 1:
+        return build_digest(sections[0]["title"], sections[0]["entries"])
+    total = sum(len(s["entries"]) for s in sections)
+    plural = "" if total == 1 else "s"
+    subject = f"[RSSRob] {total} update{plural} across {len(sections)} feeds"
+    text_blocks, html_blocks = [], []
+    for s in sections:
+        tb, hb = _render_section(s["title"], s["entries"])
+        text_blocks.append(tb.rstrip())
+        html_blocks.append(hb)
+    return subject, "\n\n".join(text_blocks), _wrap_html("".join(html_blocks))
 
 
 def send_feed_digest(site, recipients: List[str], limit: int = 10,
