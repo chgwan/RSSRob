@@ -347,41 +347,41 @@ def send_subscriber_digest(subscriber, sites, *, limit: int = 10,
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(
         prog="rssrob.digest",
-        description="Email a feed's items (date + full title + short description) to subscribers.")
-    p.add_argument("--site", required=True, help="feed name (from config)")
+        description="Email feed items to subscribers, one combined email per "
+                    "subscriber (--subscriber/--all-subscribers) or one email "
+                    "per feed (--site, legacy).")
+    p.add_argument("--site", help="legacy: send ONE email per this feed to all its subscribers")
+    p.add_argument("--subscriber", metavar="EMAIL",
+                   help="send one combined digest to this subscriber across all their feeds")
+    p.add_argument("--all-subscribers", action="store_true",
+                   help="send every subscriber one combined digest across their feeds")
     p.add_argument("--config", help="config file or dir (default: ./configs/ etc.)")
     p.add_argument("--to", action="append", metavar="EMAIL",
-                   help="override recipients (repeatable); default = the feed's subscribers")
+                   help="(--site only) override recipients (repeatable)")
     p.add_argument("--subscribers", default="var/subscribers.json",
                    help="subscriber store path (default: var/subscribers.json)")
     p.add_argument("--limit", type=int, default=None,
                    help="max NEW items per incremental send (default: digest.limit or 10)")
     p.add_argument("--first-limit", type=int, default=None,
-                   help="max items on the first send for a feed "
-                        "(default: digest.first_limit or 20)")
+                   help="max items on a first send (default: digest.first_limit or 20)")
     p.add_argument("--state", default="var/digest_state.json",
                    help="sent-state file for incremental sends (default: var/digest_state.json)")
     p.add_argument("--all", action="store_true",
                    help="ignore state and (re)send all current items")
     p.add_argument("--dry-run", action="store_true",
-                   help="print the digest, do not send or record state")
+                   help="print what would be sent, do not send or record state")
     p.add_argument("--no-dotenv", action="store_true", help="don't load .env (use real env only)")
     args = p.parse_args(argv)
+
+    if sum([bool(args.site), bool(args.subscriber), bool(args.all_subscribers)]) != 1:
+        print("choose exactly one of --site, --subscriber, --all-subscribers", file=sys.stderr)
+        return 2
 
     try:
         config = load_config(args.config or default_config_path())
     except Exception as e:
         print(f"config error: {e}", file=sys.stderr)
         return 2
-    site = next((s for s in config.sites if s.name == args.site), None)
-    if site is None:
-        print(f"no such feed: {args.site!r}", file=sys.stderr)
-        return 2
-
-    recipients = args.to or Subscribers(args.subscribers).list(site.name)
-    if not recipients:
-        print(f"no subscribers for {site.name!r} (and no --to given)", file=sys.stderr)
-        return 1
 
     if not args.dry_run and not args.no_dotenv:
         load_dotenv()
@@ -390,36 +390,69 @@ def main(argv=None) -> int:
     limit = args.limit if args.limit is not None else int(config.digest.get("limit", 10))
     first_limit = (args.first_limit if args.first_limit is not None
                    else int(config.digest.get("first_limit", 20)))
-
     state = SentStore(args.state)
-    try:
-        result = send_feed_digest(site, recipients, limit=limit,
-                                  first_limit=first_limit, dry_run=args.dry_run,
-                                  state=state, only_new=not args.all)
-    except EmailError as e:
-        print(f"email error: {e}", file=sys.stderr)
-        return 2
-    except Exception as e:
-        print(f"failed: {type(e).__name__}: {e}", file=sys.stderr)
-        return 1
 
-    if result.get("no_new"):
-        print(f"no new items for {site.name!r} since last send (use --all to resend)")
+    # --- legacy per-feed broadcast ---
+    if args.site:
+        site = next((s for s in config.sites if s.name == args.site), None)
+        if site is None:
+            print(f"no such feed: {args.site!r}", file=sys.stderr)
+            return 2
+        recipients = args.to or Subscribers(args.subscribers).list(site.name)
+        if not recipients:
+            print(f"no subscribers for {site.name!r} (and no --to given)", file=sys.stderr)
+            return 1
+        try:
+            result = send_feed_digest(site, recipients, limit=limit,
+                                      first_limit=first_limit, dry_run=args.dry_run,
+                                      state=state, only_new=not args.all)
+        except EmailError as e:
+            print(f"email error: {e}", file=sys.stderr)
+            return 2
+        except Exception as e:
+            print(f"failed: {type(e).__name__}: {e}", file=sys.stderr)
+            return 1
+        if result.get("no_new"):
+            print(f"no new items for {site.name!r} since last send (use --all to resend)")
+        elif args.dry_run:
+            print(f"[dry-run] subject: {result['subject']}")
+            print(f"[dry-run] {result['items']} new item(s) -> {len(recipients)} recipient(s): "
+                  f"{', '.join(recipients)}")
+        else:
+            print(f"sent '{result['subject']}' ({result['items']} item(s)) to "
+                  f"{result['sent']} recipient(s) in one email")
         return 0
 
-    if args.dry_run:
-        print(f"[dry-run] subject: {result['subject']}")
-        print(f"[dry-run] {result['items']} new item(s) -> {len(recipients)} recipient(s): "
-              f"{', '.join(recipients)}")
-        print("-" * 60)
-        print(result["text"])
-        return 0
+    # --- combined per-subscriber send ---
+    by_email = Subscribers(args.subscribers).by_email()
+    if args.subscriber:
+        email = args.subscriber.strip().lower()
+        if email not in by_email:
+            print(f"not a subscriber: {args.subscriber!r}", file=sys.stderr)
+            return 1
+        targets = {email: by_email[email]}
+    else:
+        targets = by_email
+        if not targets:
+            print("no subscribers", file=sys.stderr)
+            return 1
 
-    print(f"sent '{result['subject']}' ({result['items']} item(s)) to "
-          f"{result['sent']} recipient(s) in one email")
-    for r, err in result["errors"]:
-        print(f"  FAILED {r}: {err}", file=sys.stderr)
-    return 0 if not result["errors"] else 1
+    sites_by_name = {s.name: s for s in config.sites}
+    for email, info in targets.items():
+        sites = [sites_by_name[f] for f in info["feeds"] if f in sites_by_name]
+        result = send_subscriber_digest(email, sites, limit=limit,
+                                        first_limit=first_limit, dry_run=args.dry_run,
+                                        state=state, only_new=not args.all)
+        if result.get("no_new"):
+            print(f"{email}: no new items")
+        elif args.dry_run:
+            print(f"[dry-run] {email}: {result['items']} item(s) across "
+                  f"{result['feeds']} feed(s) — {result['subject']}")
+        else:
+            print(f"{email}: sent {result['items']} item(s) across {result['feeds']} feed(s)")
+        for name, msg in result.get("errors", []):
+            print(f"  {email} / {name}: {msg}", file=sys.stderr)
+    return 0
 
 
 if __name__ == "__main__":
