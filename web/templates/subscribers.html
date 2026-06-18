@@ -15,6 +15,18 @@
   {% if add_error %}
     <div class="notice">{{ add_error }}</div>
   {% endif %}
+  {% if sent %}
+    {% if sent_n and sent_n|int > 0 %}
+      <div class="ok-banner">✓ Sent {{ sent_n }} digest{{ '' if sent_n|int == 1 else 's' }}
+        to <strong>{{ sent }}</strong>{% if nonew_n and nonew_n|int > 0 %}
+        ({{ nonew_n }} feed{{ '' if nonew_n|int == 1 else 's' }} had no new items){% endif %}.</div>
+    {% else %}
+      <div class="ok-banner">No new items for <strong>{{ sent }}</strong>'s feeds — nothing sent.</div>
+    {% endif %}
+  {% endif %}
+  {% if send_error %}
+    <div class="notice">{{ send_error }}</div>
+  {% endif %}
 
   {% if sites %}
   <form class="add-sub" method="post" action="{{ url_for('add_feed') }}">
@@ -34,7 +46,7 @@
 
   {% if by_email %}
   <table>
-    <thead><tr><th>Email</th><th>Every (hours)</th><th>Subscribed feeds</th></tr></thead>
+    <thead><tr><th>Email</th><th>Every (hours)</th><th>Subscribed feeds</th><th></th></tr></thead>
     <tbody>
       {% for email, info in by_email.items() %}
       <tr>
@@ -68,6 +80,14 @@
             </form>
           {% endif %}
         </td>
+        <td>
+          <form method="post" action="{{ url_for('send_now') }}"
+                onsubmit="return confirm('Email {{ email }} new items from their feeds now?')">
+            <input type="hidden" name="email" value="{{ email }}">
+            <button type="submit" class="send-now"
+                    title="email {{ email }} their feeds' new items now">Send now</button>
+          </form>
+        </td>
       </tr>
       {% endfor %}
     </tbody>
@@ -86,6 +106,10 @@
     .freq-form button { background:none; border:1px solid var(--line); border-radius:7px;
       padding:.3rem .7rem; font-size:.82rem; cursor:pointer; color:var(--accent); }
     .freq-form button:hover { border-color:var(--accent); }
+    .send-now { background:none; border:1px solid var(--line); border-radius:7px;
+      padding:.3rem .8rem; font-size:.82rem; cursor:pointer; color:var(--accent);
+      white-space:nowrap; }
+    .send-now:hover { border-color:var(--accent); }
     form.add-sub { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap;
       background:var(--bg); border:1px solid var(--line); border-radius:10px;
       padding:.6rem .9rem; margin:1rem 0; font-size:.9rem; }
