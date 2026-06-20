@@ -9,6 +9,8 @@ saved local copy when the network fails. This evolves the one-shot
 Run (from the repo root):
     $CLAUDE_CODE_PYTHON web/webapp.py
 then open http://127.0.0.1:5000/  (switch sites with ?site=<name>)
+Add --https to serve over HTTPS with an adhoc self-signed cert, then open
+https://127.0.0.1:5000/ (browsers warn once about the untrusted cert).
 
 To reach content behind a firewall, route outbound fetches through a proxy:
     $CLAUDE_CODE_PYTHON web/webapp.py --proxy-port 7890     # http://127.0.0.1:7890
@@ -1073,6 +1075,9 @@ def _build_arg_parser():
     p.add_argument("--proxy-scheme", default="http",
                    choices=["http", "https", "socks5", "socks5h"],
                    help="proxy scheme used with --proxy-port (default http)")
+    p.add_argument("--https", action="store_true",
+                   help="serve over HTTPS with an adhoc self-signed cert "
+                        "(needs the cryptography library; see requirements-web.txt)")
     return p
 
 
@@ -1089,4 +1094,10 @@ if __name__ == "__main__":
             except ImportError:
                 print("  note: SOCKS proxies need PySocks → pip install 'requests[socks]'")
 
-    app.run(host=args.host, port=args.port, debug=True, use_debugger=False)
+    # --https generates a fresh self-signed cert per run via Werkzeug's adhoc
+    # support (the cryptography library). Browsers will warn once about it.
+    if args.https:
+        print("serving over HTTPS (adhoc self-signed cert; browsers warn once)")
+    ssl_context = "adhoc" if args.https else None
+    app.run(host=args.host, port=args.port, ssl_context=ssl_context,
+            debug=True, use_debugger=False)
