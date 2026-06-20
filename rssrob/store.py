@@ -48,6 +48,13 @@ class Store:
         self.conn.commit()
         return inserted
 
+    def known_ids(self, feed: str) -> set:
+        """All item ids currently stored for `feed`. Used to skip work (e.g.
+        article-summary enrichment) for items already seen."""
+        rows = self.conn.execute(
+            "SELECT id FROM items WHERE feed = ?", (feed,)).fetchall()
+        return {r["id"] for r in rows}
+
     def recent(self, feed: str, limit: int) -> List[StoredItem]:
         rows = self.conn.execute(
             "SELECT id, title, link, summary, published, first_seen "

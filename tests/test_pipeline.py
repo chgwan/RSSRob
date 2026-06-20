@@ -19,6 +19,30 @@ def _rss_site():
     return Site(name="feedy", url="http://example.com/feed.xml", type="rss")
 
 
+class _RecordingFetcher:
+    """Serves a {url: bytes} mapping and records every requested URL, so tests
+    can assert which links were (or were not) followed."""
+
+    def __init__(self, mapping):
+        self.mapping = mapping
+        self.requested = []
+
+    def get(self, url, timeout=20, user_agent="RSSRob/0.1"):
+        self.requested.append(url)
+        if url not in self.mapping:
+            raise RuntimeError(f"no fixture for {url}")
+        return self.mapping[url]
+
+
+def _tzgg_site(article=True):
+    fields = {"title": "css:a", "link": "css:a@href", "date": "css:.date"}
+    return Site(
+        name="tzgg", url="http://example.com/list/", type="html", title="T",
+        item="css:li.list-tit", fields=fields,
+        article={"content": "css:.text"} if article else {},
+    )
+
+
 def test_obtain_items_html(fixtures, make_fetcher):
     html = (fixtures / "notices.html").read_bytes()
     fetcher = make_fetcher({"http://www.ipp.cas.cn/": html})
@@ -203,3 +227,94 @@ def test_run_cycle_drops_filtered_items_before_store(tmp_path, fixtures, make_fe
     assert inserted == 1                              # only one item stored
     titles = [r.title for r in store.recent("feedy", 10)]
     assert all("Second" not in (t or "") for t in titles)
+
+
+def test_run_cycle_enriches_summary_from_article_page(tmp_path):
+    list_html = (
+        '<ul class="list_grup">'
+        '<li class="list-tit"><a href="http://example.com/a1">标题甲</a>'
+        ' <span class="date">2026-06-18</span></li></ul>'
+    )
+    detail_html = (
+        '<html><body><div class="content"><div class="title">标题甲</div>'
+        '<div class="text"><p>这是详情正文内容，用于摘要提取测试。</p></div>'
+        '</div></body></html>'
+    )
+    fetcher = _RecordingFetcher({
+        "http://example.com/list/": list_html,
+        "http://example.com/a1": detail_html,
+    })
+    store = Store(str(tmp_path / "db.sqlite"))
+    out = str(tmp_path / "feeds")
+    inserted = run_cycle(_tzgg_site(), store, fetcher, out, now=1000.0)
+    assert inserted == 1
+    # detail page was followed for the excerpt
+    assert "http://example.com/a1" in fetcher.requested
+    summary = store.recent("tzgg", 10)[0].summary
+    assert summary and "详情正文" in summary
+    # excerpt rendered into the feed XML as <description>
+    xml = (tmp_path / "feeds" / "tzgg.xml").read_text(encoding="utf-8")
+    assert "详情正文" in xml
+
+
+def test_run_cycle_without_article_block_does_not_follow_links(tmp_path):
+    list_html = (
+        '<ul><li class="list-tit"><a href="http://example.com/detail.html">T</a>'
+        ' <span class="date">2026-06-18</span></li></ul>'
+    )
+    fetcher = _RecordingFetcher({"http://example.com/list/": list_html})
+    store = Store(str(tmp_path / "db.sqlite"))
+    run_cycle(_tzgg_site(article=False), store, fetcher,
+              str(tmp_path / "feeds"), now=1000.0)
+    # only the list page was fetched — the item link was never followed
+    assert fetcher.requested == ["http://example.com/list/"]
+    assert store.recent("tzgg", 10)[0].summary is None
+
+
+def test_enrich_does_not_refetch_already_stored_items(tmp_path):
+    list_html = (
+        '<ul class="list_grup">'
+        '<li class="list-tit"><a href="http://example.com/a1">甲</a>'
+        ' <span class="date">2026-06-18</span></li></ul>'
+    )
+    detail_html = '<html><body><div class="text"><p>详情正文内容。</p></div></body></html>'
+    site = _tzgg_site()
+    store = Store(str(tmp_path / "db.sqlite"))
+    out = str(tmp_path / "feeds")
+    # first cycle: detail fetched, summary stored
+    run_cycle(site, store, _RecordingFetcher({
+        "http://example.com/list/": list_html,
+        "http://example.com/a1": detail_html,
+    }), out, now=1000.0)
+    assert "详情正文" in store.recent("tzgg", 1)[0].summary
+    # second cycle: detail URL deliberately absent; must NOT be re-fetched
+    fetcher2 = _RecordingFetcher({"http://example.com/list/": list_html})
+    run_cycle(site, store, fetcher2, out, now=2000.0)
+    assert fetcher2.requested == ["http://example.com/list/"]
+    # stored summary persists (not overwritten by the un-enriched re-extraction)
+    assert "详情正文" in store.recent("tzgg", 1)[0].summary
+
+
+def test_enrich_paces_between_detail_fetches(tmp_path, monkeypatch):
+    # two new items → two detail fetches, but the gap sleeps only once
+    # (between fetches), never before the first, so single-item feeds are instant
+    list_html = (
+        '<ul class="list_grup">'
+        '<li class="list-tit"><a href="http://example.com/a1">甲</a>'
+        ' <span class="date">2026-06-18</span></li>'
+        '<li class="list-tit"><a href="http://example.com/a2">乙</a>'
+        ' <span class="date">2026-06-18</span></li></ul>'
+    )
+    detail = '<html><body><div class="text"><p>正文内容。</p></div></body></html>'
+    sleeps = []
+    monkeypatch.setattr("rssrob.pipeline.time.sleep", lambda s: sleeps.append(s))
+    fetcher = _RecordingFetcher({
+        "http://example.com/list/": list_html,
+        "http://example.com/a1": detail,
+        "http://example.com/a2": detail,
+    })
+    store = Store(str(tmp_path / "db.sqlite"))
+    run_cycle(_tzgg_site(), store, fetcher, str(tmp_path / "feeds"), now=1000.0)
+    assert fetcher.requested.count("http://example.com/a1") == 1
+    assert fetcher.requested.count("http://example.com/a2") == 1
+    assert len(sleeps) == 1                      # one gap between the two fetches

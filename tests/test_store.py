@@ -15,6 +15,15 @@ def test_insert_new_dedups(tmp_path):
     assert len(s.recent("feed1", 10)) == 2
 
 
+def test_known_ids_returns_stored_ids_scoped_to_feed(tmp_path):
+    s = _store(tmp_path)
+    assert s.known_ids("f") == set()
+    s.insert_new("f", [Item(id="a", title="A"), Item(id="b", title="B")], now=1.0)
+    s.insert_new("g", [Item(id="a", title="A in g")], now=1.0)
+    assert s.known_ids("f") == {"a", "b"}
+    assert s.known_ids("g") == {"a"}          # scoped per feed
+
+
 def test_recent_orders_by_published_then_first_seen(tmp_path):
     s = _store(tmp_path)
     s.insert_new("f", [

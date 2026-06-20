@@ -22,26 +22,20 @@ import argparse
 import html as _html
 import json
 import os
-import re
 import sys
 import threading
 from typing import List
 
-import lxml.etree
-import lxml.html
-
-from .article import fetch_article
+from .article import (DESC_LEN, fetch_article, shorten as _shorten,
+                      text_from_html as _text_from_html)
 from .config import default_config_path, load_config
 from .fetch import Fetcher
 from .notify import EmailError, load_dotenv, send_email
 from .pipeline import obtain_items
 from .subscribers import Subscribers
 
-DESC_LEN = 200                 # short-description length (like the web preview)
 _ARTICLE_KEYS = {"title": "title_selector", "content": "content_selector",
                  "date": "date_selector"}
-# Leading CSS rule blocks (Word/WPS exports dump "@page{...} p{...}" as text).
-_LEADING_CSS = re.compile(r"^(?:\s*[^{}<>]*\{[^{}]*\}\s*)+")
 
 
 def _article_kwargs(article_sel):
@@ -49,26 +43,6 @@ def _article_kwargs(article_sel):
         return {}
     return {_ARTICLE_KEYS[k]: v for k, v in article_sel.items()
             if k in _ARTICLE_KEYS and v}
-
-
-def _text_from_html(html):
-    if not html or "<" not in html:
-        return html
-    try:
-        frag = lxml.html.fromstring(html)
-        lxml.etree.strip_elements(frag, "script", "style", with_tail=False)
-        return frag.text_content()
-    except Exception:
-        return html
-
-
-def _shorten(text, n=DESC_LEN):
-    if not text:
-        return None
-    text = re.sub(r"\s+", " ", _LEADING_CSS.sub("", text)).strip()
-    if not text:
-        return None
-    return text if len(text) <= n else text[:n].rstrip() + "…"
 
 
 def _item_key(it):

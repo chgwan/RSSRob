@@ -3,9 +3,19 @@ from dataclasses import replace
 from typing import Optional, Tuple
 
 from . import extract, rss
+from .article import fetch_article, shorten, text_from_html
 from .config import Site
 from .feed import build_feed, write_feed
 from .store import Store
+
+# Map a feed's `article:` config keys to fetch_article()'s selector kwargs.
+_ARTICLE_SEL_KEYS = {"title": "title_selector", "content": "content_selector",
+                     "date": "date_selector"}
+
+# Pause between successive detail-page fetches so we don't get throttled by
+# rate-sensitive sources (e.g. gov sites). Only new items are fetched, so
+# steady-state cycles make zero extra requests and incur no delay.
+ENRICH_DELAY = 0.5
 
 
 def obtain_items(site: Site, fetcher,
@@ -37,6 +47,34 @@ def obtain_items(site: Site, fetcher,
     return items, None, None
 
 
+def enrich_summaries(site: Site, items, store: Store, fetcher) -> None:
+    """Follow each NEW html item's link and store a short excerpt as its summary.
+
+    Only runs for html feeds that declare an ``article.content`` selector. Only
+    items not already in the store are fetched (by id), so steady-state cycles
+    make zero extra requests; the excerpt is then persisted by ``insert_new``
+    and rendered as the feed's ``<description>``. Failures leave the item's
+    summary untouched so the item is still stored."""
+    if site.type != "html" or not site.article.get("content"):
+        return
+    known = store.known_ids(site.name)
+    selectors = {dest: site.article[key] for key, dest in _ARTICLE_SEL_KEYS.items()
+                 if site.article.get(key)}
+    fetched = 0
+    for it in items:
+        if it.summary or not it.link or it.id in known:
+            continue
+        if fetched:                       # pace: only sleep *between* fetches
+            time.sleep(ENRICH_DELAY)
+        fetched += 1
+        try:
+            art = fetch_article(it.link, fetcher, timeout=site.timeout,
+                                user_agent=site.user_agent, **selectors)
+            it.summary = shorten(text_from_html(art.content_text))
+        except Exception:
+            pass
+
+
 def run_cycle(site: Site, store: Store, fetcher, output_dir: str,
               now: Optional[float] = None, wechat_client=None, twitter_client=None) -> int:
     if now is None:
@@ -45,6 +83,7 @@ def run_cycle(site: Site, store: Store, fetcher, output_dir: str,
         site, fetcher, wechat_client=wechat_client, twitter_client=twitter_client)
     if site.filter:
         items = [it for it in items if site.filter.keeps(it)]
+    enrich_summaries(site, items, store, fetcher)
     inserted = store.insert_new(site.name, items, now)
     if site.max_age_days:
         store.prune_old(site.name, site.max_age_days * 86400, now)

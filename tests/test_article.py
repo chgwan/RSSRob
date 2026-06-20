@@ -1,4 +1,4 @@
-from rssrob.article import extract_article, fetch_article
+from rssrob.article import DESC_LEN, extract_article, fetch_article, shorten, text_from_html
 
 
 def test_extract_article(fixtures):
@@ -27,3 +27,26 @@ def test_fetch_article_uses_injected_fetcher(fixtures, make_fetcher):
     art = fetch_article(url, fetcher)
     assert art.title == "测试文章标题"
     assert art.url == url
+
+
+def test_shorten_truncates_and_passes_through():
+    assert shorten("a" * 300, n=10) == "a" * 10 + "…"
+    assert shorten("short") == "short"            # under DESC_LEN → unchanged
+    assert shorten(None) is None
+    assert shorten("   ") is None
+
+
+def test_shorten_strips_leading_css_junk():
+    # Word/WPS exports prepend "@page{...} p{...}" as text — dropped before truncation
+    assert shorten("@page{size:8.5in} p{margin:0} hello world", n=40) == "hello world"
+
+
+def test_text_from_html_strips_scripts_and_tags():
+    out = text_from_html("<p>hi <script>bad()</script>there</p>")
+    assert "hi" in out and "there" in out and "bad" not in out
+    assert text_from_html("plain") == "plain"     # no tags → unchanged
+    assert text_from_html(None) is None
+
+
+def test_desc_len_default():
+    assert DESC_LEN == 200

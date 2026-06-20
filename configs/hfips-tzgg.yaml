@@ -1,0 +1,11 @@
+name: hfips-tzgg
+type: html
+url: https://www.hf.cas.cn/tzygs/tzgg/
+title: "合肥物质院 通知公告"
+item: "css:li.list-tit"
+fields:
+  title: "css:a"
+  link: "css:a@href"
+  date: "css:.date"
+article:
+  content: "css:.text"

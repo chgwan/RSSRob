@@ -8,9 +8,11 @@ Selectors are parameters with IPP (www.ipp.cas.cn) defaults, so the same functio
 works for other sites by passing different selectors.
 """
 
+import re
 from dataclasses import dataclass
 from typing import Optional
 
+import lxml.etree
 import lxml.html
 
 from .extract import _select_nodes, parse_selector
@@ -19,6 +21,34 @@ from .extract import _select_nodes, parse_selector
 DEFAULT_TITLE = "css:.ipp2020-article .hd h1"
 DEFAULT_CONTENT = "css:#zoom"
 DEFAULT_DATE = "css:.ipp2020-article .hd p.titBar"
+
+DESC_LEN = 200                 # short-description length (feed <description> / digest)
+# Leading CSS rule blocks (Word/WPS exports dump "@page{...} p{...}" as text).
+_LEADING_CSS = re.compile(r"^(?:\s*[^{}<>]*\{[^{}]*\}\s*)+")
+
+
+def text_from_html(html):
+    """Plain text of an HTML fragment (scripts/styles stripped). Non-HTML
+    input is returned unchanged; failures fall back to the raw input."""
+    if not html or "<" not in html:
+        return html
+    try:
+        frag = lxml.html.fromstring(html)
+        lxml.etree.strip_elements(frag, "script", "style", with_tail=False)
+        return frag.text_content()
+    except Exception:
+        return html
+
+
+def shorten(text, n=DESC_LEN):
+    """Collapse whitespace, drop leading CSS junk, and truncate to `n` chars
+    with an ellipsis. Returns None for empty/whitespace-only input."""
+    if not text:
+        return None
+    text = re.sub(r"\s+", " ", _LEADING_CSS.sub("", text)).strip()
+    if not text:
+        return None
+    return text if len(text) <= n else text[:n].rstrip() + "…"
 
 
 @dataclass
