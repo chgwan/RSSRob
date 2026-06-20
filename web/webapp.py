@@ -11,6 +11,8 @@ Run (from the repo root):
 then open http://127.0.0.1:5000/  (switch sites with ?site=<name>)
 Add --https to serve over HTTPS with an adhoc self-signed cert, then open
 https://127.0.0.1:5000/ (browsers warn once about the untrusted cert).
+For a stable, browser-trusted cert (no per-run warning), pass --tls-cert
+and --tls-key pointing at a PEM cert/key pair, e.g. one made by mkcert.
 
 To reach content behind a firewall, route outbound fetches through a proxy:
     $CLAUDE_CODE_PYTHON web/webapp.py --proxy-port 7890     # http://127.0.0.1:7890
@@ -1078,11 +1080,36 @@ def _build_arg_parser():
     p.add_argument("--https", action="store_true",
                    help="serve over HTTPS with an adhoc self-signed cert "
                         "(needs the cryptography library; see requirements-web.txt)")
+    p.add_argument("--tls-cert", metavar="PATH",
+                   help="PEM cert file to serve HTTPS with a stable, browser-"
+                        "trusted cert (e.g. from mkcert); requires --tls-key. "
+                        "Overrides --https when both are given.")
+    p.add_argument("--tls-key", metavar="PATH",
+                   help="PEM private key matching --tls-cert")
     return p
 
 
+def resolve_ssl_context(https, tls_cert=None, tls_key=None):
+    """Choose a Werkzeug ``ssl_context`` from the HTTPS CLI flags.
+
+    - both ``tls_cert`` and ``tls_key`` -> ``(cert, key)`` for file-based TLS
+      (a stable cert you can make browser-trusted, e.g. with mkcert); this
+      takes precedence over ``--https``.
+    - ``https`` alone -> ``"adhoc"`` (a fresh self-signed cert each run).
+    - neither -> ``None`` (plain HTTP).
+
+    Raises ValueError if only one of cert/key is given.
+    """
+    if bool(tls_cert) ^ bool(tls_key):
+        raise ValueError("--tls-cert and --tls-key must be used together")
+    if tls_cert:
+        return (tls_cert, tls_key)
+    return "adhoc" if https else None
+
+
 if __name__ == "__main__":
-    args = _build_arg_parser().parse_args()
+    parser = _build_arg_parser()
+    args = parser.parse_args()
 
     PROXY_URL = normalize_proxy(resolve_proxy(args.proxy, args.proxy_port,
                                               args.proxy_host, args.proxy_scheme))
@@ -1094,10 +1121,15 @@ if __name__ == "__main__":
             except ImportError:
                 print("  note: SOCKS proxies need PySocks → pip install 'requests[socks]'")
 
-    # --https generates a fresh self-signed cert per run via Werkzeug's adhoc
-    # support (the cryptography library). Browsers will warn once about it.
-    if args.https:
+    # --tls-cert/--tls-key serve a stable, browser-trusted cert; --https falls
+    # back to a fresh adhoc self-signed cert each run (cryptography library).
+    try:
+        ssl_context = resolve_ssl_context(args.https, args.tls_cert, args.tls_key)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if ssl_context == "adhoc":
         print("serving over HTTPS (adhoc self-signed cert; browsers warn once)")
-    ssl_context = "adhoc" if args.https else None
+    elif ssl_context:
+        print(f"serving over HTTPS with cert {args.tls_cert}")
     app.run(host=args.host, port=args.port, ssl_context=ssl_context,
             debug=True, use_debugger=False)
