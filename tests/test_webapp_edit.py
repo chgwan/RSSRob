@@ -4,6 +4,7 @@ doesn't show (max_items, interval, article, …)."""
 import importlib.util
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import yaml
 
@@ -46,6 +47,13 @@ fields:
   title: "xpath:.//a"
   link: "xpath:.//a/@href"
   date: "xpath:.//span"
+"""
+
+
+RSS_FEED = """\
+name: rss
+type: rss
+url: http://example.com/feed.xml
 """
 
 
@@ -157,8 +165,106 @@ def test_save_twitter_writes_username(tmp_path):
 def test_preview_has_edit_button_not_delete(tmp_path):
     wa = _load_webapp()
     client, _ = _app(wa, tmp_path, {"ipp.yaml": IPP_FEED})
-    # stub enrich so the index route doesn't make per-item network calls
-    wa.enrich = lambda it, f, article_sel=None: (it.title, None)
+    # the index route renders without per-item article fetches (lazy enrichment),
+    # so no stubbing is needed here
     html = client.get("/", query_string={"site": "ipp"}).get_data(as_text=True)
     assert "edit feed" in html               # edit entry point present
     assert "delete-feed-btn" not in html     # delete moved into the edit page
+
+
+# --- index page: lazy enrichment (no article fetch on render) ---------------
+
+def test_index_renders_without_article_fetch(tmp_path, monkeypatch):
+    wa = _load_webapp()
+    client, _ = _app(wa, tmp_path, {"ipp.yaml": IPP_FEED})
+    calls = []
+    monkeypatch.setattr(wa, "fetch_article",
+                        lambda *a, **k: calls.append(1) or SimpleNamespace(title="x", content_text="y"))
+    html = client.get("/", query_string={"site": "ipp"}).get_data(as_text=True)
+    assert calls == []                      # no article fetch during page render
+    assert "data-enrich=" in html           # html items flagged for lazy enrich
+
+
+def test_index_shows_rss_summary_inline(tmp_path, monkeypatch):
+    wa = _load_webapp()
+    client, _ = _app(wa, tmp_path, {"rss.yaml": RSS_FEED})
+    # stub the listing fetch so no network is needed; item carries a summary
+    item = SimpleNamespace(title="T", link="http://x/1",
+                           summary="<b>SUMMARY TEXT</b>", date=None)
+    monkeypatch.setattr(wa, "obtain_items", lambda *a, **k: ([item], "feed", "d"))
+    html = client.get("/", query_string={"site": "rss"}).get_data(as_text=True)
+    assert "SUMMARY TEXT" in html           # RSS summary rendered inline
+    assert "data-enrich=" not in html       # item with a summary is not flagged
+
+
+# --- /enrich endpoint: lazy, cached, parallel, gated ------------------------
+
+def _art(title, text):
+    return SimpleNamespace(title=title, content_text=text)
+
+
+def test_enrich_endpoint_returns_titles_and_descs(tmp_path, monkeypatch):
+    wa = _load_webapp()
+    client, _ = _app(wa, tmp_path, {"ipp.yaml": IPP_FEED})
+    wa._ITEM_CACHE.clear()
+    monkeypatch.setattr(wa, "fetch_article",
+                        lambda link, fetcher, **kw: _art(f"FULL-{link}", "body text"))
+    r = client.post("/enrich", json={"site": "ipp",
+                                     "links": ["http://a", "http://b"]})
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["http://a"] == {"title": "FULL-http://a", "desc": "body text"}
+    assert data["http://b"] == {"title": "FULL-http://b", "desc": "body text"}
+
+
+def test_enrich_endpoint_caches_across_calls(tmp_path, monkeypatch):
+    wa = _load_webapp()
+    client, _ = _app(wa, tmp_path, {"ipp.yaml": IPP_FEED})
+    wa._ITEM_CACHE.clear()
+    calls = []
+
+    def fake(link, fetcher, **kw):
+        calls.append(link)
+        return _art(f"T-{link}", "x")
+
+    monkeypatch.setattr(wa, "fetch_article", fake)
+    client.post("/enrich", json={"site": "ipp", "links": ["http://a", "http://b"]})
+    assert set(calls) == {"http://a", "http://b"}      # both fetched once
+    calls.clear()
+    client.post("/enrich", json={"site": "ipp", "links": ["http://a", "http://b"]})
+    assert calls == []                                # served from _ITEM_CACHE
+
+
+def test_enrich_endpoint_tolerates_failing_link(tmp_path, monkeypatch):
+    wa = _load_webapp()
+    client, _ = _app(wa, tmp_path, {"ipp.yaml": IPP_FEED})
+    wa._ITEM_CACHE.clear()
+
+    def fake(link, fetcher, **kw):
+        if link == "http://bad":
+            raise RuntimeError("boom")
+        return _art("ok-title", "ok-body")
+
+    monkeypatch.setattr(wa, "fetch_article", fake)
+    r = client.post("/enrich", json={"site": "ipp",
+                                     "links": ["http://bad", "http://good"]})
+    data = r.get_json()
+    assert data["http://bad"] == {"title": None, "desc": None}
+    assert data["http://good"] == {"title": "ok-title", "desc": "ok-body"}
+
+
+def test_enrich_endpoint_unknown_site_is_404(tmp_path):
+    wa = _load_webapp()
+    client, _ = _app(wa, tmp_path, {"ipp.yaml": IPP_FEED})
+    r = client.post("/enrich", json={"site": "nope", "links": ["http://a"]})
+    assert r.status_code == 404
+
+
+def test_enrich_endpoint_respects_login_gate(tmp_path):
+    wa = _load_webapp()
+    client, _ = _app(wa, tmp_path, {"ipp.yaml": IPP_FEED})
+    import rssrob.admin_credential as ac       # activate admin mode -> gate on
+    ac.save(wa.ADMIN_CRED_PATH, ac.create("admin", "pw", 0))
+    r = client.post("/enrich", json={"site": "ipp", "links": ["http://a"]})
+    assert r.status_code == 302
+    assert "/login" in r.headers["Location"]

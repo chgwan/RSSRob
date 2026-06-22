@@ -26,6 +26,7 @@ import os
 import re
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 # This file lives in web/; put the repo root on sys.path so `import rssrob`
@@ -298,6 +299,21 @@ def _article_kwargs(article_sel):
     return {keys[k]: v for k, v in article_sel.items() if k in keys and v}
 
 
+def _enrich_one(link, fetcher, article_sel):
+    """(title, description) for one article link, cached in _ITEM_CACHE.
+
+    Returns (None, None) if the article can't be fetched — the caller falls
+    back to the item's own title. Shared by enrich() and the /enrich endpoint
+    so both use one cache and one fetch path."""
+    if link not in _ITEM_CACHE:
+        try:
+            art = fetch_article(link, fetcher, **_article_kwargs(article_sel))
+            _ITEM_CACHE[link] = (art.title, _shorten(_strip_html(art.content_text)))
+        except Exception:
+            _ITEM_CACHE[link] = (None, None)
+    return _ITEM_CACHE[link]
+
+
 def enrich(item, fetcher, article_sel=None):
     """Return (display_title, description) for an item.
 
@@ -309,14 +325,7 @@ def enrich(item, fetcher, article_sel=None):
         return item.title, _shorten(_strip_html(item.summary))
     if not item.link:
         return item.title, None
-    if item.link not in _ITEM_CACHE:
-        try:
-            art = fetch_article(item.link, fetcher, **_article_kwargs(article_sel))
-            _ITEM_CACHE[item.link] = (art.title or item.title,
-                                      _shorten(_strip_html(art.content_text)))
-        except Exception:
-            _ITEM_CACHE[item.link] = (item.title, None)
-    full_title, desc = _ITEM_CACHE[item.link]
+    full_title, desc = _enrich_one(item.link, fetcher, article_sel)
     return (full_title or item.title), desc
 
 
@@ -404,16 +413,22 @@ def index():
             active=site.name,
         ), 502
 
-    # remember how the page itself was loaded before article fetches reuse a fetcher
+    # remember how the page itself was loaded (shown as a live/saved badge)
     main_source, main_error = fetcher.source, fetcher.error
 
-    # full title + short description per item (separate fetcher so it doesn't
-    # clobber the page's live/saved badge); same per-feed proxy
-    article_fetcher = FallbackFetcher(FALLBACK_FILES, proxy=site.proxy)
+    # Render at once from the data we already have: the raw title plus the RSS
+    # summary (no network). Html items have no summary — their full title and
+    # description are filled in after load by the /enrich endpoint, so a page
+    # with many slow articles still renders instantly.
     entries = []
     for it in items:
-        title, desc = enrich(it, article_fetcher, site.article)
-        entries.append({"item": it, "title": title, "desc": desc})
+        desc = _shorten(_strip_html(it.summary)) if it.summary else None
+        entries.append({
+            "item": it,
+            "title": it.title,
+            "desc": desc,
+            "needs_enrich": (not desc) and bool(it.link),
+        })
 
     subs = SUBS.items(site.name)          # {email: hours}
     return render_template(
@@ -431,6 +446,41 @@ def index():
         subscribed=request.args.get("subscribed"),
         sub_error=request.args.get("sub_error"),
     )
+
+
+@app.route("/enrich", methods=["POST"])
+def enrich_items():
+    """Lazy-fill full titles + descriptions for a site's html items.
+
+    Body: ``{"site": <name>, "links": [<url>, ...]}``. Returns
+    ``{<url>: {"title", "desc"}}``. Shares the ``_ITEM_CACHE`` with ``enrich()``
+    and runs the article fetches in parallel so a cold batch returns within
+    roughly one timeout window instead of N. Inherits the login gate from the
+    global ``before_request`` (not in _PUBLIC_ENDPOINTS)."""
+    payload = request.get_json(silent=True) or {}
+    site_name = payload.get("site")
+    links = list(dict.fromkeys(
+        l for l in (payload.get("links") or []) if isinstance(l, str)))
+    if not site_name or not links:
+        return jsonify({}), 400
+
+    try:
+        config = load_config(_config_path())
+    except (ConfigError, FileNotFoundError) as e:
+        return jsonify({"error": f"config error: {e}"}), 500
+    site = next((s for s in config.sites if s.name == site_name), None)
+    if site is None:
+        return jsonify({}), 404
+
+    fetcher = FallbackFetcher(FALLBACK_FILES, proxy=site.proxy)
+    results = {}
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futs = {pool.submit(_enrich_one, link, fetcher, site.article): link
+                for link in links}
+        for fut, link in futs.items():
+            title, desc = fut.result()
+            results[link] = {"title": title, "desc": desc}
+    return jsonify(results)
 
 
 @app.route("/subscribe", methods=["POST"])
