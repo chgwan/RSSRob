@@ -1227,5 +1227,9 @@ if __name__ == "__main__":
         print("serving over HTTPS (adhoc self-signed cert; browsers warn once)")
     elif ssl_context:
         print(f"serving over HTTPS with cert {args.tls_cert}")
+    # threaded=True so the dev server handles requests concurrently. Without it
+    # (Werkzeug's default is threaded=False) a single slow page load — the index
+    # route does one network fetch per feed item — blocks every other connection
+    # until it times out, so the site appears unreachable.
     app.run(host=args.host, port=args.port, ssl_context=ssl_context,
-            debug=True, use_debugger=False)
+            debug=True, use_debugger=False, threaded=True)
