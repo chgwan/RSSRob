@@ -116,6 +116,10 @@ PLAYGROUND_DEFAULTS = {
     "link_sel": "xpath:.//a/@href",
     "date_sel": "xpath:.//span",
     "proxy": "",
+    "article_sel": "",     # html: article-body selector -> article.content (descriptions)
+    "account_id": "",      # wechat: 公众号 fakeid
+    "account_name": "",    # wechat/twitter: human label
+    "username": "",        # twitter: @handle (no leading @)
 }
 
 app = Flask(__name__)
@@ -540,54 +544,76 @@ def playground():
     except Exception:
         sites = []
 
-    # Layer defaults: hardcoded -> selected site -> explicit query args.
+    # edit=1 is the "opened the edit button" signal. The playground form does
+    # not emit it, so it drops out of the URL after the first Run — which keeps
+    # the saved filter/regex from overriding an unchecked box on re-submit.
+    editing = request.args.get("edit") == "1"
+    site_name = request.args.get("site")
+    site = next((s for s in sites if s.name == site_name), None) if site_name else None
+
+    # Layer defaults: hardcoded -> selected site (selectors always; filter/name/
+    # title/account fields only on an edit-load) -> explicit query args.
     defaults = dict(PLAYGROUND_DEFAULTS)
     prefill_type = None
-    site_name = request.args.get("site")
-    if site_name:
-        site = next((s for s in sites if s.name == site_name), None)
-        if site:
-            prefill_type = site.type
-            defaults["url"] = site.url
-            defaults["proxy"] = site.proxy or ""
-            if site.type == "html":
-                defaults.update(
-                    item=site.item or defaults["item"],
-                    title_sel=site.fields.get("title", ""),
-                    link_sel=site.fields.get("link", ""),
-                    date_sel=site.fields.get("date", ""),
-                )
+    if site:
+        prefill_type = site.type
+        defaults["url"] = site.url or ""
+        defaults["proxy"] = site.proxy or ""
+        if site.type == "html":
+            defaults.update(
+                item=site.item or defaults["item"],
+                title_sel=site.fields.get("title", ""),
+                link_sel=site.fields.get("link", ""),
+                date_sel=site.fields.get("date", ""),
+                article_sel=(site.article or {}).get("content", ""),
+            )
+        elif site.type == "wechat":
+            defaults["account_id"] = site.account_id or ""
+            defaults["account_name"] = site.account_name or ""
+        elif site.type == "twitter":
+            defaults["username"] = site.username or ""
+            defaults["account_name"] = site.account_name or ""
     form = {k: request.args.get(k, v) for k, v in defaults.items()}
     ptype = request.args.get("type") or prefill_type or "html"
-    include = request.args.get("include", "")
-    exclude = request.args.get("exclude", "")
-    field = request.args.get("field", "title")
-    regex = request.args.get("regex") == "on"
 
+    flt = site.filter if (editing and site) else None
+    inc_def = ", ".join(flt.include) if flt and flt.include else ""
+    exc_def = ", ".join(flt.exclude) if flt and flt.exclude else ""
+    include = request.args.get("include", inc_def)
+    exclude = request.args.get("exclude", exc_def)
+    field = request.args.get("field", flt.field_name if flt and flt.field_name else "title")
+    regex = request.args.get("regex") == "on" or bool(editing and flt and flt.regex)
+    form_name = request.args.get("name") or (site.name if editing and site else "")
+    form_title = request.args.get("site_title") or (site.title if editing and site else "")
+
+    # wechat/twitter have no live preview (they need their API clients), so the
+    # form is config-only for those types.
     results = error = source = None
     kept_n = total = 0
-    try:
-        fetcher = FallbackFetcher(FALLBACK_FILES, proxy=normalize_proxy(form.get("proxy")))
-        content = fetcher.get(form["url"])
-        source = fetcher.source
-        if ptype == "rss":
-            items = parse_feed(content, form["url"]).items
-        else:
-            html = content.decode("utf-8", errors="replace")
-            fields = {name: sel for name, sel in
-                      (("title", form["title_sel"]), ("link", form["link_sel"]),
-                       ("date", form["date_sel"])) if sel.strip()}
-            items = extract_items(html, form["url"], form["item"], fields)
-        results = apply_filter(items, include, exclude, field, regex)
-        total = len(results)
-        kept_n = sum(1 for r in results if r["kept"])
-    except Exception as e:
-        error = f"{type(e).__name__}: {e}"
+    if ptype in ("html", "rss"):
+        try:
+            fetcher = FallbackFetcher(FALLBACK_FILES, proxy=normalize_proxy(form.get("proxy")))
+            content = fetcher.get(form["url"])
+            source = fetcher.source
+            if ptype == "rss":
+                items = parse_feed(content, form["url"]).items
+            else:
+                html = content.decode("utf-8", errors="replace")
+                fields = {name: sel for name, sel in
+                          (("title", form["title_sel"]), ("link", form["link_sel"]),
+                           ("date", form["date_sel"])) if sel.strip()}
+                items = extract_items(html, form["url"], form["item"], fields)
+            results = apply_filter(items, include, exclude, field, regex)
+            total = len(results)
+            kept_n = sum(1 for r in results if r["kept"])
+        except Exception as e:
+            error = f"{type(e).__name__}: {e}"
 
     return render_template(
         "playground.html",
         sites=sites, active=None,
         form=form, ptype=ptype, include=include, exclude=exclude, field=field, regex=regex,
+        form_name=form_name, form_title=form_title, editing_existing=bool(editing and site),
         results=results, error=error, source=source, total=total, kept_n=kept_n,
         saved=request.args.get("saved"), save_error=request.args.get("save_error"),
     )
@@ -604,10 +630,47 @@ def _form_params(src):
     """All playground inputs from a form/args, for round-tripping in a redirect."""
     params = {k: src.get(k, "") for k in
               ("type", "url", "item", "title_sel", "link_sel", "date_sel", "proxy",
+               "article_sel", "account_id", "account_name", "username",
                "include", "exclude", "field", "name", "site_title")}
     if src.get("regex") == "on":
         params["regex"] = "on"
     return params
+
+
+# Keys the playground form controls. When updating an existing feed these are
+# replaced from the form; every other saved key (max_items, interval,
+# max_age_days, user_agent, …) is preserved so editing never silently drops it.
+_FORM_KEYS = {"name", "type", "url", "item", "fields", "title", "proxy", "filter",
+              "article", "account_id", "account_name", "username"}
+
+
+def _load_existing_site(save_path, name):
+    """Return the raw saved dict for feed ``name``, or None. Folder mode: the
+    one file per feed (falls back to scanning all yaml files). Single-file: the
+    entry in ``sites``."""
+    if os.path.isdir(save_path):
+        files = [Path(save_path) / (re.sub(r"[^A-Za-z0-9._-]", "-", name) + ".yaml")]
+        files += list(Path(save_path).glob("*.yaml")) + list(Path(save_path).glob("*.yml"))
+        seen = set()
+        for fp in files:
+            fp = Path(fp)
+            if fp in seen or not fp.exists():
+                continue
+            seen.add(fp)
+            raw = _load_raw(str(fp))
+            if not raw:
+                continue
+            if raw.get("name") == name:
+                return raw
+            for s in raw.get("sites", []) or []:
+                if s.get("name") == name:
+                    return s
+        return None
+    raw = _load_raw(save_path)
+    for s in raw.get("sites", []) or []:
+        if s.get("name") == name:
+            return s
+    return None
 
 
 @app.route("/save", methods=["POST"])
@@ -620,20 +683,47 @@ def save():
                                 **_form_params(request.form)))
 
     ptype = request.form.get("type", "html")
-    title_sel = request.form.get("title_sel", "").strip()
-    link_sel = request.form.get("link_sel", "").strip()
-    date_sel = request.form.get("date_sel", "").strip()
     include = request.form.get("include", "")
     exclude = request.form.get("exclude", "")
     field = request.form.get("field", "title")
     regex = request.form.get("regex") == "on"
 
-    site = {"name": name, "type": ptype, "url": request.form.get("url", "").strip()}
-    if ptype == "html":
-        site["item"] = request.form.get("item", "").strip()
-        site["fields"] = {k: v for k, v in (("title", title_sel), ("link", link_sel),
-                                            ("date", date_sel)) if v}
-    site_title = request.form.get("site_title", "").strip()
+    # Build the form-controlled subset of the site dict, per type. Keys omitted
+    # here (empty submission) are dropped on update so they can be cleared.
+    site = {"name": name, "type": ptype}
+    if ptype == "wechat":
+        aid = (request.form.get("account_id") or "").strip()
+        if not aid:
+            return redirect(url_for("playground",
+                save_error="wechat feeds need an account_id (公众号 fakeid)",
+                **_form_params(request.form)))
+        site["account_id"] = aid
+        an = (request.form.get("account_name") or "").strip()
+        if an:
+            site["account_name"] = an
+    elif ptype == "twitter":
+        uname = (request.form.get("username") or "").strip()
+        if not uname:
+            return redirect(url_for("playground",
+                save_error="twitter feeds need a username (@handle)",
+                **_form_params(request.form)))
+        site["username"] = uname
+        an = (request.form.get("account_name") or "").strip()
+        if an:
+            site["account_name"] = an
+    else:                                   # html or rss
+        site["url"] = (request.form.get("url") or "").strip()
+        if ptype == "html":
+            site["item"] = (request.form.get("item") or "").strip()
+            site["fields"] = {k: v for k, v in
+                              (("title", (request.form.get("title_sel") or "").strip()),
+                               ("link", (request.form.get("link_sel") or "").strip()),
+                               ("date", (request.form.get("date_sel") or "").strip())) if v}
+            asel = (request.form.get("article_sel") or "").strip()
+            if asel:
+                site["article"] = {"content": asel}
+
+    site_title = (request.form.get("site_title") or "").strip()
     if site_title:
         site["title"] = site_title
 
@@ -653,7 +743,13 @@ def save():
     if flt:
         site["filter"] = flt
 
+    # Updating an existing feed: keep saved fields the form doesn't show
+    # (max_items, interval, max_age_days, …), then apply the form values on top.
     path = _save_path()
+    existing = _load_existing_site(path, name)
+    if existing:
+        site = {**{k: v for k, v in existing.items() if k not in _FORM_KEYS}, **site}
+
     try:
         if os.path.isdir(path):
             # folder mode: one file per feed (config/<name>.yaml)

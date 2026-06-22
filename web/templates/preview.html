@@ -13,19 +13,9 @@
         {% endif %}
       </h1>
     </div>
-    <button id="delete-feed-btn" class="btn-danger" title="Remove this feed">🗑 delete feed</button>
+    <a class="btn-edit" href="{{ url_for('playground', site=site.name, edit='1') }}"
+       title="Edit this feed's config (fields, filter, delete)">✎ edit feed</a>
   </div>
-  <script>
-    document.getElementById("delete-feed-btn").addEventListener("click", async () => {
-      if (!confirm("Remove the feed “{{ site.name }}”? This deletes its config, "
-                   + "generated XML and subscribers (item history is kept).")) return;
-      const fd = new FormData(); fd.append("name", "{{ site.name }}");
-      const r = await fetch("{{ url_for('delete_feed') }}", { method: "POST", body: fd });
-      const d = await r.json();
-      if (d.deleted) { window.location.href = "{{ url_for('index') }}"; }
-      else { alert("Could not delete: " + (d.error || r.status)); }
-    });
-  </script>
 
   {% if source == "saved" %}
     <div class="notice">
@@ -82,9 +72,10 @@
     .page-head { display:flex; align-items:flex-start; justify-content:space-between;
       gap:1rem; flex-wrap:wrap; }
     .page-head h1 { display:flex; align-items:center; gap:.6rem; flex-wrap:wrap; }
-    .btn-danger { background:var(--card); color:#B42A2E; border:1px solid #EBC9C9;
-      font:600 .76rem var(--mono); padding:.32rem .7rem; border-radius:8px; }
-    .btn-danger:hover { background:#FCECEC; border-color:#E0A8A8; }
+    .btn-edit { background:var(--card); color:var(--accent); border:1px solid #c3d4ea;
+      font:600 .76rem var(--mono); padding:.32rem .7rem; border-radius:8px;
+      text-decoration:none; }
+    .btn-edit:hover { background:#eef4fb; border-color:#9bb8da; }
     .ok-banner { border-left:3px solid var(--live); background:#E1F6EE; color:#0B6D4E;
       padding:.6rem .9rem; border-radius:8px; margin:1rem 0; font-size:.9rem; }
     form.subscribe { display:flex; align-items:center; gap:.55rem; flex-wrap:wrap;

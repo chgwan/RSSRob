@@ -20,6 +20,7 @@
   form.pg .saverow .sep { color:#656d76; font-size:.85rem; }
   form.pg .saverow button { margin-top:0; }
   form.pg .saverow button.save { background:#1a7f37; }
+  form.pg .saverow button.danger { background:#B42A2E; margin-left:auto; }
   .ok { border-left:4px solid #1a7f37; background:#dafbe1; color:#1a4d2e;
         padding:.65rem .9rem; border-radius:6px; margin:1rem 0; font-size:.9rem; }
   form.pg .typesel { display:flex; gap:1.2rem; margin-top:.2rem; }
@@ -46,15 +47,21 @@
     <label>Feed type</label>
     <div class="typesel">
       <label class="inline"><input type="radio" name="type" value="html"
-        {{ '' if ptype == 'rss' else 'checked' }}> HTML page (selectors)</label>
+        {{ 'checked' if ptype == 'html' else '' }}> HTML page</label>
       <label class="inline"><input type="radio" name="type" value="rss"
-        {{ 'checked' if ptype == 'rss' else '' }}> RSS / Atom feed (no selectors)</label>
+        {{ 'checked' if ptype == 'rss' else '' }}> RSS / Atom</label>
+      <label class="inline"><input type="radio" name="type" value="wechat"
+        {{ 'checked' if ptype == 'wechat' else '' }}> WeChat 公众号</label>
+      <label class="inline"><input type="radio" name="type" value="twitter"
+        {{ 'checked' if ptype == 'twitter' else '' }}> Twitter / X</label>
     </div>
 
-    <label>Page / feed URL</label>
-    <input type="text" name="url" value="{{ form.url }}">
+    <div class="for-url"{% if ptype not in ('html', 'rss') %} style="display:none"{% endif %}>
+      <label>Page / feed URL</label>
+      <input type="text" name="url" value="{{ form.url }}">
+    </div>
 
-    <div class="html-only"{% if ptype == 'rss' %} style="display:none"{% endif %}>
+    <div class="for-html"{% if ptype != 'html' %} style="display:none"{% endif %}>
       <label>Item selector (css: or xpath:)</label>
       <input type="text" name="item" value="{{ form.item }}">
 
@@ -62,6 +69,24 @@
         <div><label>title</label><input type="text" name="title_sel" value="{{ form.title_sel }}"></div>
         <div><label>link</label><input type="text" name="link_sel" value="{{ form.link_sel }}"></div>
         <div><label>date</label><input type="text" name="date_sel" value="{{ form.date_sel }}"></div>
+      </div>
+
+      <label>article body selector (optional — follow each item's link for a short description)</label>
+      <input type="text" name="article_sel" value="{{ form.article_sel }}"
+             placeholder="css:.text   (maps to article.content)">
+    </div>
+
+    <div class="for-wechat"{% if ptype != 'wechat' %} style="display:none"{% endif %}>
+      <div class="row">
+        <div><label>account_id (公众号 fakeid)</label><input type="text" name="account_id" value="{{ form.account_id }}"></div>
+        <div><label>account_name (label)</label><input type="text" name="account_name" value="{{ form.account_name }}"></div>
+      </div>
+    </div>
+
+    <div class="for-twitter"{% if ptype != 'twitter' %} style="display:none"{% endif %}>
+      <div class="row">
+        <div><label>username (@handle)</label><input type="text" name="username" value="{{ form.username }}"></div>
+        <div><label>account_name (label)</label><input type="text" name="account_name" value="{{ form.account_name }}"></div>
       </div>
     </div>
 
@@ -91,14 +116,18 @@
     </div>
 
     <div class="saverow">
-      <button type="submit">Run</button>
-      <span class="sep">or save the current selectors + filter →</span>
-      <input type="text" name="name" value="{{ request.args.get('name', '') }}"
-             placeholder="site name (e.g. hf-kyghc-tzgg)">
-      <input type="text" name="site_title" value="{{ request.args.get('site_title', '') }}"
+      <button type="submit" class="run"{% if ptype not in ('html', 'rss') %} style="display:none"{% endif %}>Run</button>
+      <span class="sep"{% if ptype not in ('html', 'rss') %} style="display:none"{% endif %}>or save the current config →</span>
+      <input type="text" name="name" value="{{ form_name }}"
+             placeholder="site name (e.g. hfips-tzgg)">
+      <input type="text" name="site_title" value="{{ form_title }}"
              placeholder="feed title (optional)">
       <button type="submit" class="save" formmethod="post"
               formaction="{{ url_for('save') }}">Save to config</button>
+      {% if editing_existing %}
+        <button type="button" id="delete-feed-btn" class="danger"
+                title="Delete this feed">🗑 delete feed</button>
+      {% endif %}
     </div>
   </form>
 
@@ -134,16 +163,40 @@
   {% endif %}
 
 <script>
-  // hide the selector fields when previewing an RSS feed
+  // toggle field sections by feed type (and hide the live-preview Run button for
+  // wechat/twitter, which have no URL to fetch).
   (function () {
-    const box = document.querySelector('.html-only');
     const radios = document.querySelectorAll('input[name=type]');
     function update() {
-      const rss = document.querySelector('input[name=type][value=rss]').checked;
-      if (box) box.style.display = rss ? 'none' : '';
+      const t = document.querySelector('input[name=type]:checked');
+      if (!t) return;
+      const v = t.value;
+      const show = (sel, on) => {
+        const el = document.querySelector(sel);
+        if (el) el.style.display = on ? '' : 'none';
+      };
+      show('.for-html', v === 'html');
+      show('.for-url', v === 'html' || v === 'rss');
+      show('.for-wechat', v === 'wechat');
+      show('.for-twitter', v === 'twitter');
+      const preview = v === 'html' || v === 'rss';
+      document.querySelectorAll('form.pg .run, form.pg .sep').forEach(el => {
+        el.style.display = preview ? '' : 'none';
+      });
     }
     radios.forEach(r => r.addEventListener('change', update));
     update();
   })();
+  {% if editing_existing %}
+  document.getElementById("delete-feed-btn").addEventListener("click", async () => {
+    if (!confirm("Remove the feed “{{ form_name }}”? This deletes its config, "
+                 + "generated XML and subscribers (item history is kept).")) return;
+    const fd = new FormData(); fd.append("name", "{{ form_name }}");
+    const r = await fetch("{{ url_for('delete_feed') }}", { method: "POST", body: fd });
+    const d = await r.json();
+    if (d.deleted) { window.location.href = "{{ url_for('index') }}"; }
+    else { alert("Could not delete: " + (d.error || r.status)); }
+  });
+  {% endif %}
 </script>
 {% endblock %}
