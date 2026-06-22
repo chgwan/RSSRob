@@ -152,12 +152,14 @@
         <td class="d">{{ e.item.date or "—" }}</td>
         <td class="t">
           {% if e.item.link %}
-            <a href="{{ e.item.link }}" target="_blank">{{ e.title or "(untitled)" }}</a>
+            <a href="{{ e.item.link }}" target="_blank"{% if e.needs_enrich %} data-enrich="{{ e.item.link }}"{% endif %}>{{ e.title or "(untitled)" }}</a>
           {% else %}
             {{ e.title or "(untitled)" }}
           {% endif %}
           {% if e.desc %}
             <div class="summary">{{ e.desc }}</div>
+          {% elif e.needs_enrich %}
+            <div class="summary" data-enrich-desc></div>
           {% endif %}
         </td>
       </tr>
@@ -166,6 +168,38 @@
   </table>
   {% else %}
     <div class="notice">No items matched. Check the selectors for this site.</div>
+  {% endif %}
+
+  {% if entries %}
+  <script>
+  // Full titles + descriptions for html items are fetched after render via the
+  // /enrich endpoint (per-item article fetches can be slow; the page itself
+  // shows instantly with the raw titles). Cached server-side, so repeat loads
+  // fill in at once.
+  (function () {
+    var links = Array.prototype.slice.call(
+        document.querySelectorAll('[data-enrich]'))
+        .map(function (a) { return a.getAttribute('data-enrich'); })
+        .filter(Boolean);
+    links = Array.from(new Set(links));          // dedupe
+    if (links.length === 0) return;
+    fetch({{ url_for("enrich_items") | tojson }}, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ site: {{ active | tojson }}, links: links })
+    }).then(function (r) { return r.ok ? r.json() : Promise.reject(r); })
+      .then(function (data) {
+        Array.prototype.slice.call(document.querySelectorAll('[data-enrich]'))
+          .forEach(function (a) {
+            var got = data[a.getAttribute('data-enrich')];
+            if (!got) return;
+            if (got.title) a.textContent = got.title;
+            var desc = a.parentElement.querySelector('[data-enrich-desc]');
+            if (desc && got.desc) desc.textContent = got.desc;
+          });
+      }).catch(function () { /* leave raw titles; descriptions stay blank */ });
+  })();
+  </script>
   {% endif %}
 
 {% endblock %}
