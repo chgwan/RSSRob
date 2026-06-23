@@ -49,9 +49,11 @@ from rssrob.filters import apply_filter, parse_terms
 from rssrob.extract import extract_items
 from rssrob import admin_credential
 from rssrob.notify import load_dotenv
+from rssrob.fetch import Fetcher
 from rssrob.pipeline import obtain_items
 from rssrob.rss import parse_feed
-from rssrob.scheduler import build_twitter_client, build_wechat_client
+from rssrob.scheduler import Scheduler, build_twitter_client, build_wechat_client
+from rssrob.store import Store
 from rssrob.subscribers import Subscribers
 from rssrob.twitter import X_LOGIN_URL, TwitterAuthError
 from rssrob.twitter_credential import DEFAULT_PATH as TWITTER_CRED_PATH
@@ -1281,5 +1283,18 @@ if __name__ == "__main__":
     # (Werkzeug's default is threaded=False) a single slow page load — the index
     # route does one network fetch per feed item — blocks every other connection
     # until it times out, so the site appears unreachable.
+    # Keep feeds fresh in the background via rssrob's Scheduler, so scraping is
+    # managed by this one service (no extra systemd units). The Flask reloader
+    # re-runs this script in a child process; Werkzeug sets WERKZEUG_RUN_MAIN
+    # there, so we start the scraper only in that serving process (not the
+    # reloader parent) — each site is scraped once, every site.interval.
+    use_reloader = True
+    if not use_reloader or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        try:
+            _cfg = load_config(_config_path())
+            Scheduler(_cfg, Store(_cfg.state_db), Fetcher()).start()
+            print("background scraper started (rssrob.Scheduler)")
+        except Exception as exc:
+            print(f"background scraper disabled: {exc}", file=sys.stderr)
     app.run(host=args.host, port=args.port, ssl_context=ssl_context,
-            debug=True, use_debugger=False, threaded=True)
+            debug=True, use_debugger=False, threaded=True, use_reloader=use_reloader)

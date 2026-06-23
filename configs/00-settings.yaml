@@ -22,7 +22,7 @@ http:
 
 # Per-feed defaults (any feed may override these in its own file).
 defaults:
-  interval: 1800              # seconds between scrapes of each feed
+  interval: 28800             # seconds between scrapes of each feed (8h default)
   max_items: 50              # most recent items kept per feed (rolling window)
   timeout: 20                # HTTP fetch timeout, seconds
   user_agent: RSSRob/0.1     # User-Agent sent when fetching pages/feeds
